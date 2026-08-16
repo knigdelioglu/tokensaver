@@ -27,7 +27,7 @@ toml_edit = "0.22"
 zstd = "0.13"
 
 [build-dependencies]
-tauri-build = "2.6.3"
+tauri-build = { version = "2.6.3", features = [] }
 
 [lints.rust]
 unsafe_code = "forbid"
