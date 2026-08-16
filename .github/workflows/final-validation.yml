@@ -72,6 +72,68 @@ jobs:
           cargo run --quiet -- help
           cargo run --quiet -- version
 
+      - name: Native aging helper scripts are syntactically valid
+        run: |
+          python3 -m py_compile \
+            scripts/live-token-ab.py \
+            scripts/live-aging-quality.py \
+            scripts/cache-evidence.py \
+            scripts/verify-aging-release.py
+
+      - name: Live probes fail closed without explicit quota consent
+        run: |
+          if python3 scripts/live-token-ab.py --url http://127.0.0.1:1/v1/responses --model test; then
+            echo 'token A/B probe unexpectedly ran without --yes' >&2
+            exit 1
+          fi
+          test $? -eq 2
+          if python3 scripts/live-aging-quality.py --url http://127.0.0.1:1/v1/responses --model test; then
+            echo 'quality probe unexpectedly ran without --yes' >&2
+            exit 1
+          fi
+          test $? -eq 2
+
+      - name: Cache evidence export stays content-free
+        run: |
+          tmpdir="$(mktemp -d)"
+          cat > "$tmpdir/savings.json" <<'JSON'
+          {
+            "all_time": {
+              "events": 12,
+              "aged_requests": 4,
+              "provider_usage_events": 10,
+              "aged_cache": {"usage_events": 4, "input_tokens": 1000, "cached_input_tokens": 800},
+              "unaged_cache": {"usage_events": 6, "input_tokens": 1200, "cached_input_tokens": 900}
+            }
+          }
+          JSON
+          python3 scripts/cache-evidence.py --savings-file "$tmpdir/savings.json" --output "$tmpdir/cache.json"
+          python3 - <<'PY' "$tmpdir/cache.json"
+          import json, sys
+          data = json.load(open(sys.argv[1], encoding='utf-8'))
+          assert data['schema'] == 'tokensaver-cache-evidence:v1'
+          assert data['aged']['usage_events'] == 4
+          assert data['unaged']['usage_events'] == 6
+          forbidden = ['prompt', 'tool_result', 'receipt', 'credential', 'capability']
+          encoded = json.dumps(data).lower()
+          assert not any(word in encoded for word in forbidden)
+          PY
+
+      - name: Aging release gate fails closed on missing live evidence
+        run: |
+          tmpdir="$(mktemp -d)"
+          printf '%s\n' '{"schema":"tokensaver-live-token-ab:v1","pass":false}' > "$tmpdir/token.json"
+          printf '%s\n' '{"schema":"tokensaver-live-aging-quality:v1","pass":false}' > "$tmpdir/quality.json"
+          printf '%s\n' '{"schema":"tokensaver-cache-evidence:v1","aged":{},"unaged":{}}' > "$tmpdir/cache.json"
+          if python3 scripts/verify-aging-release.py \
+            --token-ab "$tmpdir/token.json" \
+            --quality "$tmpdir/quality.json" \
+            --cache "$tmpdir/cache.json" \
+            --skip-doctor; then
+            echo 'aging release gate unexpectedly accepted missing evidence' >&2
+            exit 1
+          fi
+
       - name: Release verifier must fail closed without evidence
         run: |
           if python3 scripts/verify-release-gates.py; then
