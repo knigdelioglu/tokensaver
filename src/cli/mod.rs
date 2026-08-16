@@ -138,7 +138,9 @@ async fn stats() -> Result<i32, Box<dyn Error>> {
         print_savings_control(&snapshot.today);
         println!("All time");
         print_savings_control(&snapshot.all_time);
-        println!("Run `tokensaver diagnostics` for persisted request-shape, skip-reason, provider-token, and cache evidence.");
+        println!(
+            "Run `tokensaver diagnostics` for persisted request-shape, skip-reason, provider-token, and cache evidence."
+        );
         return Ok(0);
     }
 
@@ -154,7 +156,9 @@ async fn stats() -> Result<i32, Box<dyn Error>> {
 fn diagnostics() -> Result<i32, Box<dyn Error>> {
     let stored = load_product_stats()?;
     println!("Content-free optimizer diagnostics");
-    println!("Persisted counters flush periodically while the menu-bar runtime is active; no prompt/tool-result body is stored.");
+    println!(
+        "Persisted counters flush periodically while the menu-bar runtime is active; no prompt/tool-result body is stored."
+    );
     println!("Today");
     print_diagnostics_stored(stored.today);
     println!("All time");
@@ -339,7 +343,10 @@ fn print_savings_control(savings: &ControlSavings) {
     println!("  aged requests: {}", savings.aged_requests);
     println!("  no eligible result: {}", savings.no_eligible_requests);
     println!("  eligible but no savings: {}", savings.no_savings_requests);
-    println!("  fail-original requests: {}", savings.fail_original_requests);
+    println!(
+        "  fail-original requests: {}",
+        savings.fail_original_requests
+    );
     println!("  saving-off requests: {}", savings.disabled_requests);
     println!(
         "  native passthrough / compaction bypass: {} / {}",
@@ -367,7 +374,10 @@ fn print_savings_stored(savings: StoredSavingsView) {
     println!("  aged requests: {}", savings.aged_requests);
     println!("  no eligible result: {}", savings.no_eligible_requests);
     println!("  eligible but no savings: {}", savings.no_savings_requests);
-    println!("  fail-original requests: {}", savings.fail_original_requests);
+    println!(
+        "  fail-original requests: {}",
+        savings.fail_original_requests
+    );
     println!("  saving-off requests: {}", savings.disabled_requests);
     println!(
         "  native passthrough / compaction bypass: {} / {}",
@@ -401,8 +411,7 @@ fn print_savings_stored(savings: StoredSavingsView) {
 fn print_diagnostics_stored(savings: StoredSavingsView) {
     println!(
         "  Responses with / without previous_response_id: {} / {}",
-        savings.responses_with_previous_response_id,
-        savings.responses_without_previous_response_id
+        savings.responses_with_previous_response_id, savings.responses_without_previous_response_id
     );
     println!(
         "  previous_response_id preserved: {}",
