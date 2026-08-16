@@ -134,6 +134,43 @@ fn realtime_drift_refuses_disconnect_overwrite() {
 }
 
 #[test]
+fn config_error_display_never_exposes_capability_or_drift_values() {
+    let unsafe_error = CodexConfigError::UnsafeLoopbackUrl(ENDPOINT.to_owned()).to_string();
+    assert!(!unsafe_error.contains(SECRET));
+    assert!(!unsafe_error.contains(ENDPOINT));
+
+    let replacement_error = CodexConfigError::ActiveSnapshotDifferentEndpoint {
+        installed: ENDPOINT.to_owned(),
+        requested: format!("http://127.0.0.1:43118/{SECRET}/v1"),
+    }
+    .to_string();
+    assert!(!replacement_error.contains(SECRET));
+    assert!(!replacement_error.contains("43117"));
+    assert!(!replacement_error.contains("43118"));
+
+    let expected = "https://private-user-value.example/original".to_owned();
+    let actual = "https://private-user-value.example/changed".to_owned();
+    let drift_error = CodexConfigError::Drift {
+        key: "openai_base_url",
+        expected: Some(expected.clone()),
+        actual: Some(actual.clone()),
+    }
+    .to_string();
+    assert!(!drift_error.contains(&expected));
+    assert!(!drift_error.contains(&actual));
+}
+
+#[test]
+fn config_parse_error_display_does_not_echo_parser_context() {
+    let sensitive = "secret-parser-context";
+    let error = CodexConfigError::InvalidToml(sensitive.to_owned()).to_string();
+    assert!(!error.contains(sensitive));
+
+    let snapshot_error = CodexConfigError::SnapshotFormat(sensitive.to_owned()).to_string();
+    assert!(!snapshot_error.contains(sensitive));
+}
+
+#[test]
 fn non_string_owned_key_is_rejected() {
     let source = "openai_base_url = 42\n";
     let error = connect_config_text(source, ENDPOINT).expect_err("invalid field type");
