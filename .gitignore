@@ -1,0 +1,57 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+out/
+coverage/
+*.tsbuildinfo
+
+# Runtime / local state
+.tmp/
+tmp/
+.cache/
+state/
+*.log
+*.pid
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Test artifacts
+.nyc_output/
+playwright-report/
+test-results/
+
+# Package-manager debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local benchmark / captured-agent data
+benchmarks/local/
+fixtures/private/
+captures/
+rollouts/
+usage-events.jsonl
