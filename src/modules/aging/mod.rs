@@ -1,8 +1,9 @@
 //! Deterministic tool-result aging domain.
 //!
 //! This module owns eligibility rules, aging policy, deterministic receipts,
-//! and aging decisions. It remains independent of Codex configuration, network
-//! transport, telemetry persistence, runtime lifecycle, and UI code.
+//! receipt evidence verification, and aging decisions. It remains independent
+//! of Codex configuration, network transport, telemetry persistence, runtime
+//! lifecycle, and UI code.
 //!
 //! The domain intentionally returns replacement decisions rather than mutating
 //! protocol objects. A transport adapter may apply a replacement only after it
@@ -20,6 +21,9 @@ pub(crate) use engine::{
 pub(crate) use model::{HistoryItem, ToolOutput, ToolResultKind};
 pub(crate) use policy::{
     AgingPolicy, DEFAULT_FRONTIER, DEFAULT_MIN_BYTES, DEFAULT_PREVIEW_CODE_UNITS,
+};
+pub(crate) use receipt::{
+    parse_receipt, verify_exact_candidate, ReceiptEvidence, ReceiptParseError,
 };
 
 #[cfg(test)]
