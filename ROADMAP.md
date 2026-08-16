@@ -73,6 +73,8 @@ Exit criteria: **met**.
 
 # Phase 1 — Deterministic tool-result aging engine
 
+**Status: IMPLEMENTED — VALIDATION DEFERRED**
+
 **Goal:** implement the token-saving core as a pure, independently testable domain module.
 
 Initial policy:
@@ -96,19 +98,20 @@ A result remains exact when:
 - transformation validation fails
 - receipt would not reduce size
 
-Required implementation:
+Implemented:
 
 - typed aging policy
 - recognized tool-call/tool-result shapes
 - consumed-result detection
 - safe textual extraction
 - Unicode-safe head/tail preview
-- deterministic receipt generation
-- structural call/result preservation
-- byte savings result object
+- deterministic SHA-256 receipt generation
+- structural call/result validation tuple (`index + kind + call_id`)
+- measured byte-savings result object
 - hard disabled behavior
+- per-result decision metadata used by Phase 2 observability
 
-Required tests:
+Authored tests cover:
 
 - large consumed textual result is aged
 - unconsumed result remains exact
@@ -122,17 +125,15 @@ Required tests:
 - disabled mode is byte-preserving
 - compact result never exceeds source
 - later tool output alone does not falsely prove consumption
-- architecture contract remains green
+- architecture contract
 
-Exit criteria:
-
-- aging behavior has no Codex/network/UI/persistence dependency
-- every safety invariant introduced by the module is covered
-- unknown data is preserved rather than guessed
+Exit criteria implementation is complete. Automated execution is intentionally deferred by project instruction; no test/build/lint/formatter/CI command has been run.
 
 ---
 
 # Phase 2 — Measurement, telemetry, and benchmark harness
+
+**Status: IMPLEMENTED — VALIDATION DEFERRED**
 
 **Goal:** prove what was evaluated and how much context was actually removed.
 
@@ -148,6 +149,28 @@ Per-request metrics:
 - estimated tokens saved
 - optimizer-ran-but-nothing-qualified state
 
+Implemented:
+
+- content-free `OptimizationEvent` and `OptimizationMetrics` models
+- distinct outcomes for disabled, bypassed, evaluated/no eligible, evaluated/no savings, and aged
+- exact byte accounting from aging results
+- reference-compatible `round(bytes / 4)` token estimate, explicitly marked approximate
+- provider-reported input/cache token fields kept separate from estimates
+- session, arbitrary time-range, and all-retained-event aggregation
+- cache-rate aggregation only from provider-reported token counters
+- per-result content-free aging decision reasons
+- application-layer mapper from aging results to telemetry events
+- offline benchmark harness with deterministic synthetic fixtures for:
+  - test logs
+  - build logs
+  - large diffs
+  - repository search output
+  - large file reads
+  - many medium outputs
+  - mixed/unsupported output
+  - unconsumed histories
+- `docs/MEASUREMENT.md` defining metric and privacy semantics
+
 Rules:
 
 - routine telemetry never stores original tool-result bodies
@@ -155,22 +178,9 @@ Rules:
 - token estimates are explicitly labeled estimates
 - provider-reported token/cache metrics are kept distinct when naturally available
 
-Offline benchmark fixtures:
+Authored tests cover telemetry aggregation, disabled-vs-no-eligible distinction, provider usage separation, benchmark skip reasons, and deterministic savings behavior.
 
-- test logs
-- build logs
-- large diffs
-- repository search output
-- large file reads
-- many medium outputs
-- mixed text/image output
-- unconsumed histories
-
-Exit criteria:
-
-- benchmark explains why candidates were/weren't aged
-- optimizer disabled is distinguishable from optimizer ran/no eligible result
-- savings are reproducible
+Exit criteria implementation is complete. Automated execution is intentionally deferred by project instruction; no test/build/lint/formatter/CI command has been run.
 
 ---
 
