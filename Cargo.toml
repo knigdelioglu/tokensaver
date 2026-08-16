@@ -7,6 +7,9 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
+[dependencies]
+sha2 = "0.10"
+
 [lints.rust]
 unsafe_code = "forbid"
 
