@@ -89,6 +89,7 @@ src/
 │   ├── control.rs
 │   ├── desktop_runtime.rs
 │   ├── doctor.rs
+│   ├── maintenance.rs
 │   ├── measurement.rs
 │   ├── quality.rs
 │   ├── recovery.rs
@@ -171,6 +172,7 @@ Last optimization 16:12: 84 KB → 3 KB · 81 KB saved · ~20K tokens
 ✓ Token Saving Enabled
   Disconnect from Codex
 ✓ Start at Login
+  Prepare for Uninstall…
 
 Quit TokenSaver
 ```
@@ -185,6 +187,7 @@ Lifecycle safeguards include:
 - Disconnect/Quit refusal while a request is active
 - Codex config restoration before normal process exit
 - content-free persisted savings aggregates
+- uninstall preparation through the same safe disconnect transaction
 
 See [docs/DESKTOP_RUNTIME.md](./docs/DESKTOP_RUNTIME.md).
 
@@ -204,6 +207,7 @@ tokensaver config set min-bytes <bytes>
 tokensaver config set frontier <count>
 tokensaver config set preview-code-units <count>
 tokensaver doctor
+tokensaver uninstall [--purge-state]
 tokensaver version
 ```
 
@@ -215,11 +219,44 @@ Behavior:
 - structural policy changes require Codex to be disconnected
 - saving on/off remains live-switchable
 - doctor reports redacted PASS/WARN/FAIL health checks
+- uninstall purge is blocked while runtime/restoration state says cleanup is unsafe
 - measured bytes and estimated tokens are always distinguished
 
 Runtime preferences schema v2 persists `saving_enabled`, `connect_on_launch`, `min_bytes`, `frontier`, and `preview_code_units`. Legacy v1 preferences receive the original conservative policy defaults.
 
 See [docs/CLI.md](./docs/CLI.md).
+
+## Packaging, update, and uninstall
+
+Phase 7 defines a macOS `.app` + `.dmg` path without adding an untrusted self-updater.
+
+Release assets are source-first:
+
+```text
+assets/app-icon.svg
+  ↓
+cargo tauri icon
+  ↓
+generated icons/
+  ↓
+release-only Tauri config overlay
+  ↓
+TokenSaver.app + DMG
+```
+
+Use the authored packaging entry point:
+
+```bash
+bash scripts/package-macos.sh
+```
+
+`bundle.createUpdaterArtifacts` is intentionally disabled until TokenSaver has a trusted update endpoint, updater public key, protected signing material, signed artifacts, and tested recovery behavior.
+
+Safe manual update uses normal Quit so Codex config is restored while `connect_on_launch` is preserved; replacing the `.app` does not delete external per-user preferences/savings.
+
+Safe uninstall uses **Prepare for Uninstall…** to disconnect Codex, clear reconnect intent, disable Start at Login, flush telemetry, and exit. Optional `tokensaver uninstall --purge-state` then deletes only known TokenSaver-owned state, refuses an active restoration snapshot, and preserves unknown entries.
+
+See [docs/PACKAGING.md](./docs/PACKAGING.md).
 
 ## Design principles
 
@@ -245,7 +282,7 @@ Omitted bytes are never presented as known content.
 Directly measured bytes, estimated tokens, and provider-reported usage are distinct metrics.
 
 ### Safe lifecycle over convenience
-TokenSaver refuses unsafe config restoration, disconnect, or normal process exit.
+TokenSaver refuses unsafe config restoration, disconnect, normal process exit, or state purge.
 
 ## Required invariants
 
@@ -266,6 +303,7 @@ Among the project-wide invariants:
 13. exact omitted content is never fabricated
 14. normal desktop shutdown does not intentionally strand Codex on a dead local endpoint
 15. CLI control never becomes arbitrary local command execution
+16. uninstall cleanup never deletes restoration proof or unknown user-owned entries
 
 The complete invariant set is in [SCOPE.md](./SCOPE.md).
 
@@ -278,10 +316,10 @@ The complete invariant set is in [SCOPE.md](./SCOPE.md).
 - **Phase 4 — Recovery/quality guardrails:** implemented, validation deferred
 - **Phase 5 — macOS runtime/tray:** implemented, validation deferred
 - **Phase 6 — CLI/doctor:** implemented, validation deferred
-- **Phase 7 — Packaging/update/uninstall:** not started
+- **Phase 7 — Packaging/update/uninstall:** implemented, validation deferred
 - **Phase 8 — Hardening/release gates:** not started
 
-Per project instruction, implementation has been authored **without running tests, builds, linters, formatters, CI, benchmarks, CLI/doctor smoke tests, or live Codex validation**. Final execution is intentionally deferred.
+Per project instruction, implementation has been authored **without running tests, builds, linters, formatters, CI, benchmarks, CLI/doctor smoke tests, package builds, or live Codex validation**. Final execution is intentionally deferred.
 
 See [ROADMAP.md](./ROADMAP.md).
 
@@ -294,6 +332,7 @@ See [ROADMAP.md](./ROADMAP.md).
 - [docs/RECOVERY.md](./docs/RECOVERY.md) — receipt/recovery evidence rules
 - [docs/DESKTOP_RUNTIME.md](./docs/DESKTOP_RUNTIME.md) — macOS runtime/tray lifecycle contract
 - [docs/CLI.md](./docs/CLI.md) — CLI/control-channel/doctor contract
+- [docs/PACKAGING.md](./docs/PACKAGING.md) — packaging/update/uninstall contract
 - [docs/UPSTREAM_REFERENCE.md](./docs/UPSTREAM_REFERENCE.md) — pinned Codex Router behavior adopted/rejected
 - [AGENTS.md](./AGENTS.md) — implementation guardrails
 
