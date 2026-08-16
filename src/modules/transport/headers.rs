@@ -23,6 +23,7 @@ const FORWARD_HEADERS: &[&str] = &[
     "x-codex-turn-state",
     "x-codex-window-id",
     "x-oai-attestation",
+    "x-openai-fedramp",
     "x-openai-subagent",
     "x-responsesapi-include-timing-metrics",
 ];
