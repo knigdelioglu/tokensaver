@@ -2,5 +2,22 @@
 //!
 //! This module owns loopback request handling, request-body compression,
 //! streaming relay, cancellation propagation, and transport compatibility.
-//! It may invoke the aging module through an explicit application/domain
-//! contract, but it must not own aging policy or Codex configuration files.
+//! It invokes the aging domain through an explicit normalized contract, but it
+//! does not own aging policy or Codex configuration files.
+
+mod capability;
+mod compression;
+mod headers;
+mod request;
+mod server;
+
+pub(crate) use capability::CallerCapability;
+pub(crate) use request::{
+    is_compaction_path, is_responses_path, PreparationOutcome, PreparedRequestBody,
+};
+pub(crate) use server::{
+    BoundTransport, TransportControl, TransportError, TransportSettings,
+};
+
+#[cfg(test)]
+mod tests;
