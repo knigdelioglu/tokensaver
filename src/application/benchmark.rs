@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::modules::aging::{
     AgingDecision, AgingPolicy, AgingSkipReason, AgingStats, HistoryItem, ToolOutput,
     ToolResultKind, age_tool_results,

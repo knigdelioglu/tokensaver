@@ -125,18 +125,19 @@ async fn saving(args: &[String]) -> Result<i32, Box<dyn Error>> {
 }
 
 async fn stats() -> Result<i32, Box<dyn Error>> {
-    if let Ok(response) = runtime_request(ControlRequest::Stats).await {
-        if response.ok {
-            if let Some(snapshot) = response.snapshot {
-                println!("This session");
-                print_savings_control(&snapshot.session);
-                println!("Today");
-                print_savings_control(&snapshot.today);
-                println!("All time");
-                print_savings_control(&snapshot.all_time);
-                return Ok(0);
-            }
-        }
+    if let Ok(ControlResponse {
+        ok: true,
+        snapshot: Some(snapshot),
+        ..
+    }) = runtime_request(ControlRequest::Stats).await
+    {
+        println!("This session");
+        print_savings_control(&snapshot.session);
+        println!("Today");
+        print_savings_control(&snapshot.today);
+        println!("All time");
+        print_savings_control(&snapshot.all_time);
+        return Ok(0);
     }
 
     let stored = load_product_stats()?;
@@ -166,20 +167,21 @@ async fn config(args: &[String]) -> Result<i32, Box<dyn Error>> {
 }
 
 async fn config_show() -> Result<i32, Box<dyn Error>> {
-    if let Ok(response) = runtime_request(ControlRequest::ConfigShow).await {
-        if response.ok {
-            if let Some(snapshot) = response.snapshot {
-                println!("saving = {}", on_off(snapshot.saving_enabled));
-                println!("connect_on_launch = {}", snapshot.connect_on_launch);
-                println!("min_bytes = {}", snapshot.policy.min_bytes);
-                println!("frontier = {}", snapshot.policy.frontier);
-                println!(
-                    "preview_code_units = {}",
-                    snapshot.policy.preview_code_units
-                );
-                return Ok(0);
-            }
-        }
+    if let Ok(ControlResponse {
+        ok: true,
+        snapshot: Some(snapshot),
+        ..
+    }) = runtime_request(ControlRequest::ConfigShow).await
+    {
+        println!("saving = {}", on_off(snapshot.saving_enabled));
+        println!("connect_on_launch = {}", snapshot.connect_on_launch);
+        println!("min_bytes = {}", snapshot.policy.min_bytes);
+        println!("frontier = {}", snapshot.policy.frontier);
+        println!(
+            "preview_code_units = {}",
+            snapshot.policy.preview_code_units
+        );
+        return Ok(0);
     }
 
     print_settings(load_product_settings()?);

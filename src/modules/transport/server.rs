@@ -71,6 +71,7 @@ pub(crate) struct TransportControl {
 }
 
 impl TransportControl {
+    #[allow(dead_code)]
     pub(crate) fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }
@@ -83,6 +84,7 @@ impl TransportControl {
         self.aging_policy.write().await.enabled = enabled;
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn aging_policy(&self) -> AgingPolicy {
         *self.aging_policy.read().await
     }

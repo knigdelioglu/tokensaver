@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 use crate::modules::codex_integration::{
     CodexConnectionState, codex_config_path, connection_state_with_snapshot, load_config_snapshot,
@@ -92,7 +92,7 @@ pub(crate) async fn run_doctor() -> DoctorReport {
     }
 }
 
-fn snapshot_check(data_dir: &PathBuf) -> DiagnosticCheck {
+fn snapshot_check(data_dir: &Path) -> DiagnosticCheck {
     let snapshot_path = data_dir.join(SNAPSHOT_FILE);
     if !snapshot_path.exists() {
         return DiagnosticCheck::pass(

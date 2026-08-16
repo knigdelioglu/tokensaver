@@ -77,6 +77,7 @@ impl EncodingChain {
         Ok(Self(encodings))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn is_identity(&self) -> bool {
         self.0.is_empty()
     }

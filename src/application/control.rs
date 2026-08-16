@@ -86,6 +86,7 @@ impl ControlResponse {
 
 #[derive(Debug)]
 pub(crate) enum ControlError {
+    #[allow(dead_code)]
     UnsupportedPlatform,
     RuntimeAlreadyActive,
     Timeout(&'static str),

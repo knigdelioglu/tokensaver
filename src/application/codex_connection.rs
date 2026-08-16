@@ -20,6 +20,7 @@ const OBSERVATION_CHANNEL_CAPACITY: usize = 1024;
 pub(crate) struct CodexConnectionRecord {
     pub(crate) config_path: PathBuf,
     pub(crate) snapshot_path: PathBuf,
+    #[allow(dead_code)]
     pub(crate) snapshot: CodexConfigSnapshot,
 }
 

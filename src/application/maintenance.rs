@@ -133,7 +133,7 @@ fn removable_owned_file_type(metadata: &fs::Metadata, file_name: &str) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::FileTypeExt;
-        return file_name == CONTROL_SOCKET_FILE && metadata.file_type().is_socket();
+        file_name == CONTROL_SOCKET_FILE && metadata.file_type().is_socket()
     }
 
     #[cfg(not(unix))]

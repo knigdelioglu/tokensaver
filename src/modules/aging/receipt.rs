@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::fmt;
 
 use sha2::{Digest, Sha256};
@@ -73,9 +75,8 @@ pub(super) fn build_receipt(
             head.len(),
             tail.len()
         ),
-        format!(
-            "[Evidence boundary: only the beginning and tail below are verbatim. The omitted middle is not present in this receipt and must not be inferred.]"
-        ),
+        "[Evidence boundary: only the beginning and tail below are verbatim. The omitted middle is not present in this receipt and must not be inferred.]"
+            .to_string(),
         format!(
             "[Recovery: if exact omitted content is required, repeat {recovery} with the same arguments only when it is safe to repeat; otherwise obtain the exact source through the normal Codex workflow. Exact recovery is trusted only when UTF-8 byte length and SHA-256 both match this receipt.]"
         ),

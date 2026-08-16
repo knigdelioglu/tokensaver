@@ -290,10 +290,10 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                     interval.tick().await;
                     refresh_tray(&app_handle, &controller, &tray, &shell_error).await;
                     ticks = ticks.wrapping_add(1);
-                    if ticks % 5 == 0 {
-                        if let Err(error) = controller.flush_persistent().await {
-                            set_shell_error(&shell_error, Some(error.to_string()));
-                        }
+                    if ticks.is_multiple_of(5)
+                        && let Err(error) = controller.flush_persistent().await
+                    {
+                        set_shell_error(&shell_error, Some(error.to_string()));
                     }
                 }
             });

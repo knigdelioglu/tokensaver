@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::modules::{
     aging::{AgingResult, AgingStats},
     telemetry::{OptimizationEvent, OptimizationMetrics, OptimizationOutcome, ProviderUsage},

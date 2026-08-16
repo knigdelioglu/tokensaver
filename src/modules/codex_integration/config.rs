@@ -45,6 +45,7 @@ pub(crate) enum CodexConnectionState {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) enum CodexConfigError {
     InvalidToml(String),
     UnsupportedOpenAiBaseUrlType,
@@ -197,6 +198,7 @@ pub(crate) fn connection_state_with_snapshot(
     connection_state_file(config_path, &snapshot)
 }
 
+#[allow(dead_code)]
 pub(crate) fn connect_config_file(
     path: &Path,
     loopback_base_url: &str,

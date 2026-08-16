@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::modules::aging::{
     ReceiptEvidence, ReceiptParseError, parse_receipt, verify_exact_candidate,
 };

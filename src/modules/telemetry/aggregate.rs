@@ -82,6 +82,7 @@ impl SavingsSummary {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn cache_rate_basis_points(self) -> Option<u64> {
         if self.provider_input_tokens == 0 {
             return None;
@@ -101,6 +102,7 @@ impl SavingsLedger {
         self.events.push(event);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn all_time(&self) -> SavingsSummary {
         summarize(self.events.iter().copied())
     }
@@ -114,6 +116,7 @@ impl SavingsLedger {
         )
     }
 
+    #[allow(dead_code)]
     pub(crate) fn between(&self, start_epoch_ms: u64, end_epoch_ms: u64) -> SavingsSummary {
         summarize(self.events.iter().copied().filter(|event| {
             event.observed_at_epoch_ms >= start_epoch_ms
@@ -121,10 +124,12 @@ impl SavingsLedger {
         }))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn len(&self) -> usize {
         self.events.len()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn is_empty(&self) -> bool {
         self.events.is_empty()
     }
