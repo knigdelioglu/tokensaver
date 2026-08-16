@@ -1,6 +1,7 @@
 use std::fmt;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use axum::body::{to_bytes, Body};
@@ -68,6 +69,7 @@ pub(crate) struct TransportControl {
     local_addr: SocketAddr,
     capability: CallerCapability,
     aging_policy: Arc<RwLock<AgingPolicy>>,
+    active_requests: Arc<AtomicUsize>,
 }
 
 impl TransportControl {
@@ -86,6 +88,10 @@ impl TransportControl {
     pub(crate) async fn aging_policy(&self) -> AgingPolicy {
         *self.aging_policy.read().await
     }
+
+    pub(crate) fn active_requests(&self) -> usize {
+        self.active_requests.load(Ordering::Acquire)
+    }
 }
 
 pub(crate) struct BoundTransport {
@@ -103,6 +109,7 @@ impl BoundTransport {
         .await?;
         let local_addr = listener.local_addr()?;
         let aging_policy = Arc::new(RwLock::new(settings.aging_policy));
+        let active_requests = Arc::new(AtomicUsize::new(0));
         let client = reqwest::Client::builder()
             .redirect(Policy::none())
             .build()
@@ -110,6 +117,7 @@ impl BoundTransport {
         let state = Arc::new(ServerState {
             capability: settings.capability.clone(),
             aging_policy: aging_policy.clone(),
+            active_requests: active_requests.clone(),
             observer: settings.observer,
             client,
         });
@@ -117,6 +125,7 @@ impl BoundTransport {
             local_addr,
             capability: settings.capability,
             aging_policy,
+            active_requests,
         };
 
         Ok(Self {
@@ -144,8 +153,26 @@ impl BoundTransport {
 struct ServerState {
     capability: CallerCapability,
     aging_policy: Arc<RwLock<AgingPolicy>>,
+    active_requests: Arc<AtomicUsize>,
     observer: Option<mpsc::UnboundedSender<TransportObservation>>,
     client: reqwest::Client,
+}
+
+struct ActiveRequestGuard {
+    counter: Arc<AtomicUsize>,
+}
+
+impl ActiveRequestGuard {
+    fn enter(counter: Arc<AtomicUsize>) -> Self {
+        counter.fetch_add(1, Ordering::AcqRel);
+        Self { counter }
+    }
+}
+
+impl Drop for ActiveRequestGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -208,9 +235,6 @@ async fn handle_request(
         return empty_response(StatusCode::NOT_FOUND);
     };
 
-    // Current Codex advertises WebSocket support for the built-in OpenAI
-    // provider even when openai_base_url is overridden. TokenSaver intentionally
-    // serves HTTP only and relies on Codex's explicit 426 -> HTTP fallback.
     if route.kind == NativeRouteKind::Responses && request.headers().get(UPGRADE).is_some() {
         return empty_response(StatusCode::UPGRADE_REQUIRED);
     }
@@ -220,6 +244,8 @@ async fn handle_request(
     if route.method == Method::POST && !is_json_request(request.headers()) {
         return empty_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
+
+    let _active_request = ActiveRequestGuard::enter(state.active_requests.clone());
 
     let Some(upstream_path) = upstream_path(local_path) else {
         return empty_response(StatusCode::NOT_FOUND);
@@ -284,11 +310,6 @@ async fn handle_request(
     relay_response(upstream)
 }
 
-/// The built-in Codex provider chooses ChatGPT backend for first-party account
-/// auth modes and api.openai.com for API-key auth before TokenSaver overrides
-/// its base URL. After interception, the account-ID routing header is the
-/// transport-level signal available to preserve that distinction without
-/// reading or owning Codex credentials.
 fn native_upstream_base_url(headers: &HeaderMap) -> &'static str {
     if headers.contains_key("chatgpt-account-id") || headers.contains_key("x-openai-fedramp") {
         CHATGPT_CODEX_BASE_URL
@@ -297,9 +318,6 @@ fn native_upstream_base_url(headers: &HeaderMap) -> &'static str {
     }
 }
 
-/// TokenSaver's configured local base URL ends in `/v1`. Both first-party
-/// upstream constants already represent their provider base, so forwarding
-/// strips exactly that local prefix before joining the native path.
 fn upstream_path(local_path: &str) -> Option<&str> {
     let path = local_path.strip_prefix("/v1")?;
     if path.starts_with('/') {
