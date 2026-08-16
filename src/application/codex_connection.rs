@@ -12,6 +12,7 @@ use crate::modules::transport::{
     BoundTransport, CallerCapability, TransportControl, TransportError, TransportObservation,
     TransportSettings,
 };
+use crate::shared::security::redact_local_secrets;
 
 #[derive(Clone, Debug)]
 pub(crate) struct CodexConnectionRecord {
@@ -39,11 +40,18 @@ impl fmt::Display for CodexConnectionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::CodexPath(error) => write!(formatter, "failed to locate Codex config: {error}"),
-            Self::Config(error) => write!(formatter, "failed to update Codex config: {error}"),
-            Self::Transport(error) => write!(formatter, "failed to prepare TokenSaver transport: {error}"),
+            Self::Config(error) => write!(
+                formatter,
+                "failed to update Codex config: {}",
+                redact_local_secrets(&error.to_string())
+            ),
+            Self::Transport(error) => {
+                write!(formatter, "failed to prepare TokenSaver transport: {error}")
+            }
             Self::InvalidPersistedEndpoint(value) => write!(
                 formatter,
-                "stored TokenSaver endpoint is invalid and cannot be reused safely: {value:?}"
+                "stored TokenSaver endpoint is invalid and cannot be reused safely: {}",
+                redact_local_secrets(value)
             ),
         }
     }
@@ -140,7 +148,9 @@ mod tests {
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use super::{disconnect_native_codex, prepare_native_codex_connection_at};
+    use super::{
+        disconnect_native_codex, prepare_native_codex_connection_at, CodexConnectionError,
+    };
     use crate::modules::aging::AgingPolicy;
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -155,6 +165,15 @@ mod tests {
         let config = root.join("config.toml");
         let snapshot = root.join("codex-config-snapshot.json");
         (root, config, snapshot)
+    }
+
+    #[test]
+    fn persisted_endpoint_error_redacts_capability() {
+        let capability = "a".repeat(64);
+        let endpoint = format!("http://127.0.0.1:43117/{capability}/v1");
+        let message = CodexConnectionError::InvalidPersistedEndpoint(endpoint).to_string();
+        assert!(!message.contains(&capability));
+        assert!(message.contains("[REDACTED]"));
     }
 
     #[tokio::test]
