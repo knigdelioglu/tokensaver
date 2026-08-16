@@ -156,18 +156,28 @@ async fn runtime_control_check() -> DiagnosticCheck {
     };
 
     match send_control_request(&socket_path, &ControlRequest::Status).await {
-        Ok(response) if response.ok => {
-            let detail = response
-                .snapshot
-                .map(|snapshot| {
+        Ok(response) if response.ok => match response.snapshot {
+            Some(snapshot) if snapshot.dropped_telemetry_observations > 0 => {
+                DiagnosticCheck::warning(
+                    "runtime-control",
                     format!(
-                        "runtime reachable; service={}, codex={}, active_requests={}",
-                        snapshot.service, snapshot.codex, snapshot.active_requests
-                    )
-                })
-                .unwrap_or_else(|| "runtime reachable".to_owned());
-            DiagnosticCheck::pass("runtime-control", detail)
-        }
+                        "runtime reachable; service={}, codex={}, active_requests={}; {} content-free telemetry observation(s) were dropped because the bounded queue was saturated",
+                        snapshot.service,
+                        snapshot.codex,
+                        snapshot.active_requests,
+                        snapshot.dropped_telemetry_observations
+                    ),
+                )
+            }
+            Some(snapshot) => DiagnosticCheck::pass(
+                "runtime-control",
+                format!(
+                    "runtime reachable; service={}, codex={}, active_requests={}; telemetry queue has no recorded drops",
+                    snapshot.service, snapshot.codex, snapshot.active_requests
+                ),
+            ),
+            None => DiagnosticCheck::pass("runtime-control", "runtime reachable"),
+        },
         Ok(response) => DiagnosticCheck::warning(
             "runtime-control",
             response
