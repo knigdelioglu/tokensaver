@@ -1,0 +1,133 @@
+name: Final Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'build.rs'
+      - 'src/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'tauri.conf.json'
+      - 'tauri.release.conf.json'
+      - 'assets/**'
+      - '.github/workflows/final-validation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tokensaver-final-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+
+jobs:
+  rust-validation:
+    name: Rust / architecture / unit / integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install Rust stable with lint components
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Compile all targets
+        run: cargo check --all-targets --all-features
+
+      - name: Clippy with warnings denied
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Full Rust test suite
+        run: cargo test --all-targets --all-features -- --nocapture
+
+      - name: Documentation tests
+        run: cargo test --doc --all-features -- --nocapture
+
+      - name: CLI help and version smoke
+        run: |
+          cargo run --quiet -- help
+          cargo run --quiet -- version
+
+      - name: Release verifier must fail closed without evidence
+        run: |
+          if python3 scripts/verify-release-gates.py; then
+            echo 'release verifier unexpectedly accepted missing validation evidence' >&2
+            exit 1
+          fi
+          echo 'release verifier correctly refused packaging without validation evidence'
+
+  macos-validation:
+    name: macOS native / Tauri / packaging
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: macOS compile
+        run: cargo check --all-targets --all-features
+
+      - name: macOS tests
+        run: cargo test --all-targets --all-features -- --nocapture
+
+      - name: macOS release build
+        run: cargo build --release
+
+      - name: Install Tauri CLI v2
+        run: cargo install tauri-cli --version '^2' --locked
+
+      - name: Package app and DMG
+        run: bash scripts/package-macos.sh
+
+      - name: Verify package artifacts exist
+        run: |
+          find target/release/bundle -maxdepth 3 -type d -name '*.app' -print
+          find target/release/bundle -maxdepth 3 -type f -name '*.dmg' -print
+          test -n "$(find target/release/bundle -maxdepth 3 -type d -name '*.app' -print -quit)"
+          test -n "$(find target/release/bundle -maxdepth 3 -type f -name '*.dmg' -print -quit)"
+
+      - name: CLI smoke on macOS binary
+        run: |
+          ./target/release/tokensaver help
+          ./target/release/tokensaver version
+          ./target/release/tokensaver status || test $? -eq 1
+
+      - name: Upload macOS bundles for inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: tokensaver-macos-final-validation
+          path: |
+            target/release/bundle/macos/*.app
+            target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 7
