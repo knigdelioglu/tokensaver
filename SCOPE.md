@@ -140,7 +140,7 @@ TokenSaver may include deterministic fixtures for aging behavior, byte savings, 
 
 ### 9. Safety and regression testing
 
-Tests for preservation, eligibility, Unicode safety, hashing, pass-through behavior, protocol structure, recovery evidence, configuration restoration, lifecycle, CLI/control security, diagnostics redaction, packaging/uninstall ownership, and module-boundary enforcement are part of the product.
+Tests for preservation, eligibility, Unicode safety, hashing, pass-through behavior, protocol structure, recovery evidence, configuration restoration, lifecycle, CLI/control security, diagnostics redaction, packaging/uninstall ownership, runtime resource bounds, compatibility gates, release evidence, and module-boundary enforcement are part of the product.
 
 ### 10. Minimal macOS tray/menu-bar control surface
 
@@ -185,7 +185,7 @@ Live mutation commands may use an owner-local finite control protocol to reach t
 
 Offline CLI reads/writes may touch only TokenSaver-owned application state through application services.
 
-Doctor may inspect/redact only information necessary to assess TokenSaver/Codex integration health, local state permissions, restoration coherence, runtime reachability, and fixed first-party host reachability.
+Doctor may inspect/redact only information necessary to assess TokenSaver/Codex integration health, local state permissions, restoration coherence, runtime reachability, bounded telemetry health, supported Codex identity, and fixed first-party host reachability.
 
 ### 13. Packaging, update, and uninstall safety
 
@@ -201,6 +201,22 @@ In scope:
 - optional cleanup limited to proven TokenSaver-owned state
 
 A self-updater is not part of the current MVP unless trusted endpoints, signed artifacts, updater keys, downgrade/version policy, and recovery validation exist first.
+
+### 14. Bounded hardening and release evidence
+
+TokenSaver may impose explicit local resource limits and compatibility/release gates necessary to keep the optimizer safe under malformed, overloaded, stale, or unsupported conditions.
+
+In scope:
+
+- bounded encoded/decoded request bodies
+- bounded concurrent native requests
+- bounded content-free telemetry queues with visible drop counters
+- bounded owner-local control clients and I/O timeouts
+- source-level secret redaction in outward error strings
+- explicit Codex protocol baseline and exact-build validation identity
+- fail-closed release packaging tied to evidence from the exact source commit/version/Codex build
+
+A compatibility warning or missing release manifest must never be converted into a guessed PASS merely for convenience.
 
 ## Required invariants
 
@@ -276,15 +292,27 @@ Tray toggle/checkmark state must be derived from application/runtime evidence. I
 
 ### INV-18 — CLI control is finite and owner-local
 
-The live CLI control channel must use an explicit finite protocol, bounded message sizes, owner-only local permissions, and a single runtime owner. It must not accept arbitrary shell commands, arbitrary filesystem operations, upstream proxy targets, model/provider routing, or tool-result content.
+The live CLI control channel must use an explicit finite protocol, bounded message sizes, bounded client concurrency/time, owner-only local permissions, and a single runtime owner. It must not accept arbitrary shell commands, arbitrary filesystem operations, upstream proxy targets, model/provider routing, or tool-result content.
 
 ### INV-19 — Diagnostics are redacted and evidence-bounded
 
-Doctor/status output must not expose provider credentials, account IDs, capability URLs, original tool-result bodies, receipt bodies, or arbitrary Codex config contents. A reachability probe must not be presented as proof of authenticated inference success.
+Doctor/status output and source-level outward error displays must not expose provider credentials, account IDs, capability URLs, drift values containing private configuration, original tool-result bodies, receipt bodies, or arbitrary Codex config contents. A reachability probe must not be presented as proof of authenticated inference success.
 
 ### INV-20 — Uninstall never destroys restoration proof or unknown state
 
 Generic uninstall cleanup must refuse to proceed while an active Codex restoration snapshot exists. It must delete only explicitly owned TokenSaver state, remain non-recursive, preserve unknown files/directories, and never edit Codex configuration as part of generic state purge.
+
+### INV-21 — Runtime resource growth is bounded
+
+Native request body collection, decoded inspection, native request concurrency, content-free telemetry buffering, and owner-local control concurrency must have explicit finite bounds. Saturation may degrade optional telemetry or reject new work, but must not create unbounded memory/task growth or silently weaken transport authentication.
+
+### INV-22 — Compatibility is evidence-based
+
+TokenSaver must not silently treat an unknown Codex build as validated. Compatibility status must be tied to the pinned protocol baseline and an explicitly validated exact Codex identity; unknown/unvalidated identities remain warnings until real validation proves them.
+
+### INV-23 — Release claims fail closed
+
+A development package may be built without validation, but a package represented by the project release path must be blocked unless release evidence matches the exact current TokenSaver source commit, TokenSaver version, pinned Codex baseline, validated Codex identity, and every required release gate.
 
 ## Out of scope
 
@@ -402,7 +430,9 @@ The MVP is complete when TokenSaver can:
 14. Provide a minimal CLI that controls the single runtime without starting a competing proxy.
 15. Provide redacted diagnostics without exposing capability/auth/result content.
 16. Produce the macOS package/update/uninstall lifecycle without deleting restoration proof or unknown state.
-17. Pass automated and live validation for all required invariants.
+17. Bound runtime resources and surface telemetry/compatibility degradation without blocking or fabricating inference state.
+18. Block the release packaging path until validation evidence matches the exact source/Codex identities and required gates.
+19. Pass automated and live validation for all required invariants.
 
 The MVP does **not** require a provider catalog, model selector, external-model routing, multi-agent orchestration, account-management system, full dashboard, general local-control API, or self-updater.
 
@@ -412,7 +442,7 @@ Before adding a substantial feature, evaluate it against:
 
 1. Does it directly reduce repeated context/token usage, improve correctness/recovery/measurement, or safely operate that mechanism?
 2. Can it be implemented without turning TokenSaver into a general router, agent platform, or automation bus?
-3. Does it preserve fail-original/pass-through/recovery truthfulness, lifecycle restoration, and secret redaction?
+3. Does it preserve fail-original/pass-through/recovery truthfulness, lifecycle restoration, resource bounds, evidence-based compatibility, and secret redaction?
 4. Does it preserve modular-monolith boundaries, or is an explicit architecture decision required?
 
 If any answer is no, reject the feature or move it to a separate project.
