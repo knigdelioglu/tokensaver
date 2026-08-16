@@ -56,13 +56,17 @@ fn aging_domain_is_adapter_agnostic() {
             "crate::modules::runtime",
             "crate::modules::diagnostics",
             "crate::application",
+            "crate::desktop",
         ],
     );
 }
 
 #[test]
 fn shared_does_not_depend_on_product_modules() {
-    assert_no_dependency("src/shared", &["crate::modules", "crate::application"]);
+    assert_no_dependency(
+        "src/shared",
+        &["crate::modules", "crate::application", "crate::desktop"],
+    );
 }
 
 #[test]
@@ -76,4 +80,24 @@ fn codex_integration_does_not_own_aging() {
         "src/modules/codex_integration",
         &["crate::modules::aging"],
     );
+}
+
+#[test]
+fn runtime_is_not_a_cross_module_orchestrator() {
+    assert_no_dependency(
+        "src/modules/runtime",
+        &[
+            "crate::modules::aging",
+            "crate::modules::transport",
+            "crate::modules::codex_integration",
+            "crate::modules::telemetry",
+            "crate::application",
+            "crate::desktop",
+        ],
+    );
+}
+
+#[test]
+fn desktop_shell_uses_application_boundary_not_product_modules() {
+    assert_no_dependency("src/desktop", &["crate::modules::"]);
 }
