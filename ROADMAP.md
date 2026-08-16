@@ -1,10 +1,10 @@
 # TokenSaver Roadmap
 
-TokenSaver has one product goal: **reduce repeated input-token usage in Codex by compacting old, already-consumed tool results, while leaving the rest of Codex behavior unchanged.**
+TokenSaver has one product goal: **reduce repeated input-token usage in Codex by compacting old, already-consumed tool results while leaving the rest of Codex behavior unchanged.**
 
-The project is intentionally not a model router. It does not add providers, replace Codex model selection, translate external model protocols, manage provider credentials, or orchestrate agents.
+TokenSaver is a modular monolith, not a model router. It does not add providers, replace the native Codex model picker, translate third-party model protocols, manage provider credentials, or orchestrate agents.
 
-The target end state is:
+Target flow:
 
 ```text
 Codex
@@ -17,218 +17,184 @@ age only eligible historical tool results
   ↓
 forward to the same native Codex/OpenAI upstream
   ↓
-relay the response stream unchanged
+relay response stream unchanged
   ↓
 Codex
 ```
 
-The user should continue using Codex normally. TokenSaver should be visible primarily through a small tray/menu-bar application that proves it is connected and shows measured savings.
+The user continues using Codex normally. TokenSaver is visible through a small tray/menu-bar application that proves connection state and measured savings.
 
 ---
 
 ## Product acceptance target
 
-TokenSaver is considered successful when all of the following are true:
+TokenSaver is successful when:
 
-1. A user can install and open TokenSaver without changing how they normally use Codex.
-2. Codex continues to use its existing account, native model picker, MCP tools, skills, subagents, permissions, and task state.
-3. TokenSaver transparently receives Codex Responses traffic through a local loopback transport.
-4. With token saving enabled, only eligible historical tool-result bodies are rewritten.
-5. With token saving disabled, TokenSaver behaves as an exact semantic pass-through.
-6. Explicit Codex conversation-compaction requests are not aged before the summarizer reads the original history.
-7. The tray shows whether Codex is connected and how many bytes / estimated tokens were saved.
-8. Disabling or uninstalling TokenSaver restores the Codex configuration it changed.
+1. A user can install/open TokenSaver without changing normal Codex usage.
+2. Codex keeps its existing account, native model picker, MCP tools, skills, subagents, permissions, and task state.
+3. Native Responses traffic passes through a local TokenSaver loopback transport.
+4. Aging ON rewrites only eligible historical tool-result bodies.
+5. Aging OFF performs no context rewrite.
+6. Explicit Codex conversation compaction reads original history rather than aged receipts.
+7. The tray truthfully shows connection state, optimizer activity, measured bytes saved, and estimated tokens saved.
+8. Disconnect/uninstall restores TokenSaver-owned Codex configuration safely.
 9. TokenSaver never becomes a provider/model router.
+10. Modular-monolith boundaries remain enforced.
 
-A key integration invariant is:
+Core integration invariant:
 
-> For the same Codex request, the optimized and pass-through payloads may differ only where the tool-result aging policy explicitly permits a historical tool-result body to change.
+> For the same logical Codex request, optimized and pass-through payloads may differ only where the aging policy explicitly permits an eligible historical tool-result body to change.
 
 ---
 
-# Phase 0 — Project contract and upstream reference
+# Phase 0 — Project contract and architecture
 
-**Goal:** lock the product boundary before implementation.
+**Status: COMPLETE**
 
-Planned work:
+**Goal:** freeze product scope, architecture, upstream reference, and the Codex integration contract before behavior is implemented.
 
-- Keep `README.md`, `SCOPE.md`, and this roadmap aligned.
-- Document Codex Router's tool-result-aging behavior as the initial reference implementation.
-- Record the safety invariants that TokenSaver must preserve.
-- Keep attribution to the upstream inspiration explicit.
-- Define the exact Codex request surfaces TokenSaver needs to intercept.
-- Document what TokenSaver must never own:
-  - model routing
-  - external provider catalogs
-  - provider/API credentials
-  - LiteLLM or protocol translation to third-party models
-  - model picker replacement
-  - subagent orchestration
-  - MCP execution
-  - Codex task state
+Completed:
 
-### Exit criteria
+- `README.md`, `SCOPE.md`, and this roadmap aligned to the same narrow product.
+- Codex Router `v0.4.0-beta.4` pinned as the initial tool-result-aging reference.
+- `docs/UPSTREAM_REFERENCE.md` records what TokenSaver adopts and explicitly rejects.
+- `docs/CODEX_TRANSPORT_CONTRACT.md` defines the native Codex interception/pass-through contract.
+- `docs/ARCHITECTURE.md` defines the modular-monolith module ownership and dependency direction.
+- Rust project skeleton established with `application`, `aging`, `transport`, `codex_integration`, `telemetry`, `runtime`, `diagnostics`, and `shared` boundaries.
+- `tests/architecture_contract.rs` protects critical forbidden dependencies.
+- `AGENTS.md` records implementation guardrails and authority order.
+- Public crate surface begins at `application`; product modules remain internal.
 
-- `README.md`, `SCOPE.md`, and `ROADMAP.md` describe the same narrow product.
-- No provider-routing feature is required for the MVP.
-- The Codex transport integration contract is documented well enough to test.
+Phase 0 explicitly does **not** claim the token optimizer is implemented. That begins in Phase 1.
+
+Exit criteria: **met**.
 
 ---
 
 # Phase 1 — Deterministic tool-result aging engine
 
-**Goal:** reproduce the token-saving core as a pure, independently testable engine.
+**Goal:** implement the token-saving core as a pure, independently testable domain module.
 
-The engine must operate on request history without depending on networking, UI, Codex configuration, or provider code.
+Initial policy:
 
-## Initial policy
-
-Use conservative defaults matching the reference behavior:
-
-- minimum textual result size: **32 KiB**
-- protected newest-result frontier: **4 tool results**
+- textual results only
+- minimum size: **32 KiB**
+- protected newest frontier: **4 tool results**
+- model must have acted after the result
 - head preview: approximately **1024 code units**
 - tail preview: approximately **1024 code units**
-- identity: original UTF-8 byte length + **SHA-256** digest
+- identity: original UTF-8 byte length + **SHA-256**
+- replacement is applied only when smaller than the source
 
-## Eligibility rules
+A result remains exact when:
 
-A result may be compacted only when:
+- still unconsumed
+- inside the protected frontier
+- too small
+- mixed/image/non-text
+- malformed/unknown/ambiguous
+- transformation validation fails
+- receipt would not reduce size
 
-- it is a recognized tool-result item
-- its model-visible payload is entirely textual
-- it is larger than the configured minimum threshold
-- the model has already acted after receiving it
-- it is outside the protected newest-result frontier
-- the compact receipt is smaller than the original result
+Required implementation:
 
-A result must remain exact when:
+- typed aging policy
+- recognized tool-call/tool-result shapes
+- consumed-result detection
+- safe textual extraction
+- Unicode-safe head/tail preview
+- deterministic receipt generation
+- structural call/result preservation
+- byte savings result object
+- hard disabled behavior
 
-- it is still unconsumed
-- it is one of the protected newest results
-- it is below the size threshold
-- it contains image/mixed/non-text content
-- its structure is unknown or ambiguous
-- parsing/classification fails
-- compaction would not reduce size
+Required tests:
 
-## Receipt requirements
-
-A deterministic receipt should retain:
-
-- original UTF-8 byte length
-- SHA-256 digest
-- bounded head preview
-- explicit omitted-middle marker
-- bounded tail preview
-- structural tool-call/result identifiers required by the Responses protocol
-- enough recovery context to identify the source operation without inventing information
-
-The same source result must produce the same receipt bytes every time.
-
-## Required tests
-
-- large consumed textual output is compacted
-- unconsumed output remains exact
-- newest four tool outputs remain byte-for-byte exact
-- small outputs remain exact
+- large consumed textual result is aged
+- unconsumed result remains exact
+- newest four remain byte-for-byte exact
+- small results remain exact
 - mixed/image-bearing results remain exact
-- Unicode/surrogate boundaries are preserved
-- digest generation is deterministic
-- call IDs and required structural fields survive rewriting
+- Unicode boundaries are not corrupted
+- digest/receipt are deterministic
+- structural identifiers survive
+- unknown shapes fail original
 - disabled mode is byte-preserving
-- compact output never exceeds source size
-- unknown item shapes fail original
-- a later tool result alone does not falsely prove the model consumed an earlier result
+- compact result never exceeds source
+- later tool output alone does not falsely prove consumption
+- architecture contract remains green
 
-### Exit criteria
+Exit criteria:
 
-- Aging is a pure function/library independent of transport.
-- Every safety rule has automated coverage.
-- Unknown inputs are preserved rather than guessed.
+- aging behavior has no Codex/network/UI/persistence dependency
+- every safety invariant introduced by the module is covered
+- unknown data is preserved rather than guessed
 
 ---
 
 # Phase 2 — Measurement, telemetry, and benchmark harness
 
-**Goal:** prove that TokenSaver reduces context rather than merely rewriting it.
+**Goal:** prove what was evaluated and how much context was actually removed.
 
-## Per-request metrics
+Per-request metrics:
 
-Record only metadata, never original result bodies:
-
-- tool results evaluated
+- results evaluated
 - results eligible
 - results compacted
 - largest result evaluated
 - bytes before
 - bytes after
 - bytes saved
-- estimated input tokens saved
-- whether optimization ran but found nothing eligible
+- estimated tokens saved
+- optimizer-ran-but-nothing-qualified state
 
-Estimated token savings must be clearly labeled as estimates unless a provider/client reports authoritative token usage.
+Rules:
 
-## Offline benchmark tooling
+- routine telemetry never stores original tool-result bodies
+- byte savings are measured directly
+- token estimates are explicitly labeled estimates
+- provider-reported token/cache metrics are kept distinct when naturally available
 
-Add a benchmark command that can process captured or synthetic histories without spending model quota.
+Offline benchmark fixtures:
 
-Fixtures should include:
-
-- large test logs
+- test logs
 - build logs
 - large diffs
 - repository search output
 - large file reads
-- many medium-size tool results
-- mixed text/image results
-- histories where the model has not yet consumed the result
+- many medium outputs
+- mixed text/image output
+- unconsumed histories
 
-The report should explain why each candidate was or was not compacted.
+Exit criteria:
 
-## Cache observability
-
-Where real token/cache telemetry is available, collect enough metadata to compare:
-
-- compacted turns
-- non-compacted turns
-- input tokens
-- cached input tokens
-
-Do not claim prompt-cache preservation from byte estimates alone.
-
-### Exit criteria
-
-- Savings are deterministic and reproducible.
-- The system can distinguish "optimizer disabled" from "optimizer ran but nothing qualified."
-- Telemetry does not persist tool-result contents.
+- benchmark explains why candidates were/weren't aged
+- optimizer disabled is distinguishable from optimizer ran/no eligible result
+- savings are reproducible
 
 ---
 
 # Phase 3 — Native Codex transport integration
 
-**Goal:** make TokenSaver perform the same practical interception needed for tool-result aging on real Codex traffic, without importing Codex Router's model-routing scope.
+**Goal:** transparently run normal native Codex traffic through TokenSaver without importing Codex Router's model-routing scope.
 
-This phase is the critical bridge between a working algorithm and a usable Codex application.
+`docs/CODEX_TRANSPORT_CONTRACT.md` is authoritative for this phase.
 
 ## 3.1 Codex configuration integration
 
-TokenSaver must integrate with Codex's existing native OpenAI path rather than introduce a new model provider experience.
+Implement:
 
-Planned work:
+- detect supported Codex installation/config shape
+- preserve built-in/native OpenAI behavior
+- point only required native transport/base URL setting to TokenSaver loopback
+- snapshot every TokenSaver-owned value before changing it
+- atomic/safe writes where possible
+- exact restore on disconnect/uninstall
+- config drift detection
 
-- Detect the active Codex installation and supported configuration shape.
-- Preserve the built-in/native OpenAI provider behavior.
-- Point only the required native Codex base URL/transport setting to TokenSaver's loopback endpoint.
-- Snapshot every configuration value TokenSaver changes before modifying it.
-- Make configuration writes atomic where possible.
-- Never overwrite unrelated user settings.
-- Restore the exact previous values when TokenSaver is disconnected/uninstalled.
-- Detect configuration drift instead of blindly overwriting a user's later edits.
+Must not change:
 
-TokenSaver must not change:
-
-- selected model
+- model selection
 - reasoning level
 - MCP configuration
 - skills
@@ -237,190 +203,146 @@ TokenSaver must not change:
 - subagent configuration
 - unrelated Codex settings
 
-## 3.2 Local loopback transport
+## 3.2 Loopback transport
 
-Run a minimal local service bound to loopback only.
+Implement:
 
-Requirements:
+- loopback-only local service
+- safe local caller validation/capability as required
+- native Responses request handling
+- streamed response relay without semantic transformation
+- cancellation propagation
+- request ordering/lifecycle compatibility
+- no general unauthenticated proxy behavior
 
-- no public network binding by default
-- reject unsupported/browser-origin traffic where appropriate
-- accept the Codex Responses request path needed for normal native inference
-- preserve request semantics outside tool-result aging
-- relay response streams without semantic transformation
-- preserve cancellation/abort behavior
-- keep request ordering and streaming behavior compatible with Codex
+## 3.3 Native authentication passthrough
 
-## 3.3 Native Codex authentication passthrough
+Implement:
 
-TokenSaver should not ask the user for a separate OpenAI API key merely to optimize their native Codex traffic.
-
-Requirements:
-
-- use the authentication Codex already supplies on the native path
-- forward only the headers required by the native Codex backend
-- do not log access tokens, account IDs, capability secrets, or equivalent credentials
-- do not expose credentials in status/tray payloads
-- never replace a credential the caller explicitly supplied with another credential
-
-The exact allow-list must be derived and tested against current Codex behavior rather than forwarding arbitrary headers.
+- use authentication Codex already supplies
+- no separate OpenAI API key requirement for native Codex optimization
+- explicit upstream header allow-list
+- no credential logging/status exposure
+- never replace a credential explicitly supplied by the caller
 
 ## 3.4 Codex transport compatibility
 
-TokenSaver must support the transport details Codex actually uses, including where applicable:
+Verify against the supported real Codex build:
 
-- HTTP Responses requests
-- Codex's initial WebSocket attempt/fallback behavior
-- compressed request bodies used by Codex, including supported gzip/deflate/Brotli/Zstandard forms
-- correct decompression before inspection
-- correct serialization/recompression/forwarding semantics
-- streamed Responses events back to Codex
-- request abort/cancellation
+- HTTP Responses traffic
+- current WebSocket attempt/fallback behavior
+- required gzip/deflate/Brotli/Zstandard request-body handling
+- decode before inspection
+- correct forwarding/recompression semantics
+- streamed Responses events
+- abort/cancellation
 
-Transport compatibility must be validated against a real supported Codex build, not inferred only from unit tests.
+Do not copy version-sensitive behavior blindly from Codex Router.
 
 ## 3.5 Aging insertion point
 
-For ordinary native Responses requests:
-
 ```text
-Codex request
+receive
   ↓
-decode/decompress
+validate/decode
   ↓
-normalize only what is required to inspect history
+detect conversation compaction
   ↓
-age eligible historical tool results
+ordinary request → aging engine
   ↓
-serialize
-  ↓
-native Codex/OpenAI upstream
+serialize/forward
 ```
 
-No other semantic request rewrite is allowed unless required strictly for transparent transport compatibility and documented separately.
+No unrelated semantic rewrite is permitted.
 
-## 3.6 Compaction bypass
+## 3.6 Conversation-compaction bypass
 
-TokenSaver must recognize explicit Codex conversation-compaction traffic.
+At minimum `/responses/compact` must bypass aging when that is the verified native compaction path. Any equivalent trigger is added only after current-Codex verification.
 
-For `/responses/compact` or the supported equivalent compaction trigger:
+## 3.7 Hard OFF mode
 
-- do not replace historical tool contents with aging receipts before the compaction summarizer reads them
-- preserve the chaining/compaction semantics Codex expects
+With saving disabled:
 
-Tool-result aging and conversation compaction are complementary mechanisms; TokenSaver must not corrupt the latter to optimize the former.
+- transport may remain connected
+- aging does not run/rewrite
+- request semantics remain transparent
 
-## 3.7 Hard OFF / pass-through mode
+Required integration tests:
 
-When token saving is disabled:
-
-- do not run the aging rewrite
-- do not alter tool-result bodies
-- preserve all request semantics
-- continue serving as the local transport if the user wants the connection left installed
-
-A diagnostic comparison test must prove that OFF mode does not introduce unintended request mutations.
-
-## Required integration tests
-
-- normal Codex native turn succeeds through TokenSaver
-- streaming tool-call turn succeeds
-- cancellation propagates correctly
-- compressed request is decoded and forwarded correctly
-- auth is forwarded correctly without appearing in logs/state
-- `/responses/compact` bypasses aging
-- ON/OFF comparison isolates differences to eligible tool-result bodies
-- config connect/disconnect round-trip restores original values
+- native Codex turn succeeds
+- streamed tool-call turn succeeds
+- cancellation works
+- required compression formats round-trip
+- auth is forwarded but absent from logs/state
+- conversation compaction bypasses aging
+- ON/OFF semantic diff isolates eligible result bodies only
+- connect/disconnect restores config
 - config drift fails safely
-- unsupported request shapes fail original or pass through safely
+- unsupported shapes/config fail original or fail closed
 
-### Exit criteria
+Exit criteria:
 
-- A real Codex session works normally through TokenSaver.
-- No separate provider/model picker is introduced.
-- With aging ON, only eligible historical tool-result payloads change.
-- With aging OFF, behavior is transparent.
-- Disconnect restores Codex configuration safely.
+- real Codex works normally through TokenSaver
+- no new model/provider picker exists
+- ON changes only eligible historical tool-result bodies
+- OFF is transparent
+- disconnect restores TokenSaver-owned configuration
 
 ---
 
 # Phase 4 — Recovery and quality validation
 
-**Goal:** verify that context reduction does not materially degrade coding-agent behavior.
+**Goal:** verify that saved context does not materially damage coding-agent behavior.
 
-## Quality cases
+Quality cases:
 
-Test tasks where:
+- later need for head-preview content
+- later need for tail-preview content
+- later need for a fact only in omitted middle
+- many aged results in one long task
+- many turns after aging
+- aging plus native conversation compaction in the same session
 
-- the model later asks about information retained in the head preview
-- the model later asks about information retained in the tail preview
-- the model later needs a fact that existed only in the omitted middle
-- many large historical results have been aged
-- the task continues for many turns after aging
-- compaction and aging both occur in one long session
-
-## Recovery behavior
-
-Define an explicit safe recovery path for exact omitted content.
-
-Recovery must:
+Recovery rules:
 
 - never hallucinate omitted bytes
-- avoid exposing a broad file-retrieval capability to arbitrary model text
-- avoid leaking private original outputs through telemetry
-- clearly distinguish "receipt evidence" from exact original content
+- clearly distinguish receipt evidence from exact content
+- do not expose broad private-result retrieval to arbitrary model text
+- do not leak originals via telemetry
+- if rerunning a prior tool is offered, verify real Codex/tool behavior before promising it in receipts
 
-If the design supports rerunning a deterministic preceding tool call, validate that the protocol and client actually make this reliable before promising it in user-facing receipts.
-
-Optional later design: owner-local exact-result retention may be considered only with strict privacy, bounded storage, secure permissions, and fail-original behavior. It is not required for the first release.
-
-## A/B validation
-
-Run controlled real Codex sessions with aging ON and OFF and compare:
+A/B validation:
 
 - task success
 - tool-call correctness
-- model recovery behavior
-- input-token usage where available
-- prompt-cache rate where available
-- latency overhead
+- recovery behavior
+- input tokens where authoritative data exists
+- cache rate where available
+- TokenSaver latency overhead
 
-### Exit criteria
+Exit criteria:
 
-- No known silent data-loss failure in the validation suite.
-- Missing omitted information produces safe recovery behavior rather than invented values.
-- The optimization produces material context savings in realistic coding workloads.
+- no known silent data-loss path in the validation suite
+- omitted-middle requests fail/recover safely rather than inventing values
+- material context savings demonstrated in realistic coding workloads
 
 ---
 
 # Phase 5 — macOS runtime and tray/menu-bar application
 
-**Goal:** make TokenSaver observable and controllable without requiring terminal commands.
+**Goal:** let the user see and control TokenSaver without a terminal.
 
-The tray is part of the product, not decorative UI. It answers two essential questions:
+The tray is part of MVP observability, not decorative UI.
 
-1. **Is TokenSaver actually connected to Codex?**
-2. **Is it actually saving context?**
+Required real states:
 
-## 5.1 Runtime ownership
+- TokenSaver running/stopped
+- Codex connected/waiting/configuration problem
+- token saving enabled/disabled
+- request active/idle
+- config drift/error
 
-For the first supported platform, package TokenSaver as a macOS application with a menu-bar/tray presence.
-
-The app should own or supervise the local TokenSaver service and report its real state rather than infer it from a toggle.
-
-Required states should distinguish at least:
-
-- TokenSaver running / stopped
-- Codex connected / waiting / configuration problem
-- token saving enabled / disabled
-- current request active / idle
-- configuration drift/error
-
-## 5.2 Minimal tray surface
-
-The tray should stay intentionally small and token-focused.
-
-Example information:
+Required tray information/actions:
 
 ```text
 TokenSaver
@@ -441,85 +363,37 @@ Saved             ~2.6M tokens
 
 Last optimization
 84 KB → 3 KB
-
-[✓] Token Saving Enabled
-[ ] Start at Login
-
-Open Statistics
-Quit TokenSaver
 ```
 
-Exact copy/design may change, but the following capabilities are required:
+Also:
 
-- enable/disable aging
-- show real Codex connection state
-- show whether the optimizer actually ran
-- show session savings
-- show cumulative savings
-- show compacted result count
-- show last optimization summary
+- enable/disable saving
+- Connect to Codex / Disconnect
 - start at login
-- expose diagnostics/status
-- quit safely
+- diagnostics/status
+- safe quit
 
-## 5.3 Savings truthfulness
+Truthfulness rules:
 
-The tray must not display fabricated precision.
+- measured bytes and estimated tokens are distinguished
+- no eligible result yet is shown explicitly
+- UI toggle state never substitutes for backend state
+- connection is proven from configuration/runtime evidence
 
-Distinguish clearly between:
+Exit criteria:
 
-- measured bytes saved
-- estimated tokens saved
-- provider-reported tokens/cache telemetry, if available
-
-If no eligible result has yet appeared, say so rather than implying the optimizer is broken.
-
-Examples:
-
-- `Active · no eligible large result yet`
-- `Largest result seen: 18 KB · threshold: 32 KB`
-- `Saved 41.2 MB · ~10.3M estimated tokens`
-
-## 5.4 Connect/disconnect UX
-
-First-run experience should make the integration explicit:
-
-1. User opens TokenSaver.
-2. App detects Codex.
-3. User chooses **Connect to Codex**.
-4. TokenSaver snapshots and applies only the required Codex transport configuration.
-5. Connection is verified with real local traffic/health evidence.
-6. Tray reports `Codex: Connected`.
-
-Disconnect should:
-
-- stop intercepting Codex traffic
-- restore TokenSaver-owned configuration changes
-- leave unrelated Codex configuration untouched
-
-## 5.5 Start at login
-
-If enabled:
-
-- start the TokenSaver runtime automatically
-- ensure the local endpoint is ready before reporting Active
-- do not silently rewrite Codex configuration on every launch if it is already correct
-- surface errors when the expected configuration no longer matches
-
-### Exit criteria
-
-- A non-technical user can tell whether TokenSaver is working without opening a terminal.
-- Savings counters are backed by runtime telemetry.
-- Toggle state and backend state cannot silently disagree.
-- Connect/disconnect is reversible.
+- non-technical user can tell whether TokenSaver is working
+- counters are backed by runtime telemetry
+- connect/disconnect is reversible
+- tray/backend state cannot silently disagree
 
 ---
 
 # Phase 6 — CLI and diagnostics
 
-**Goal:** provide a small engineering/diagnostic interface without turning TokenSaver into a large management platform.
+**Goal:** provide engineering/diagnostic control over the same backend truth used by the tray.
 
-Possible commands:
+Planned commands:
 
 ```text
 tokensaver status
@@ -534,130 +408,118 @@ tokensaver config set frontier ...
 tokensaver doctor
 ```
 
-The CLI should expose the same underlying state used by the tray rather than maintain a second configuration model.
+`doctor` verifies:
 
-## `doctor` should verify
-
-- Codex installation detected
-- supported Codex configuration shape
-- TokenSaver loopback service reachable
-- Codex currently points to the expected TokenSaver endpoint
-- native upstream reachable through the transport
+- Codex installation/version support
+- configuration shape
+- loopback service
+- expected Codex → TokenSaver connection
+- upstream reachability through transport
 - token-saving state
 - config snapshot/restoration state
 - last optimizer activity
 - local state permissions
 
-Diagnostics must redact credentials and private tool-result contents.
+Diagnostics redact credentials and original tool-result bodies.
 
-### Exit criteria
+Exit criteria:
 
-- Tray and CLI report the same backend truth.
-- Common integration failures can be diagnosed without manually reading config files.
+- CLI and tray use the same state model
+- common failures can be diagnosed without manual config-file inspection
 
 ---
 
 # Phase 7 — Packaging, update safety, and uninstall
 
-**Goal:** make TokenSaver behave like a normal reversible desktop utility.
+**Goal:** make TokenSaver a reversible desktop utility.
 
-Planned work:
+Implement:
 
 - macOS application packaging
-- signed/notarized distribution when appropriate
-- deterministic installation paths
-- safe service lifecycle
-- update mechanism that preserves user state
-- explicit uninstall/disconnect path
-- restoration of TokenSaver-owned Codex configuration
-- cleanup of TokenSaver runtime files without deleting unrelated Codex data
+- signing/notarization when appropriate
+- deterministic install/state paths
+- safe runtime lifecycle
+- update mechanism preserving user choices/state
+- first-class disconnect/uninstall
+- exact restoration of TokenSaver-owned Codex config
+- cleanup limited to TokenSaver files
 
-Uninstall must be tested as a first-class workflow, not an afterthought.
+Exit criteria:
 
-### Exit criteria
-
-- Install → connect → use → disconnect → uninstall leaves Codex usable with its previous configuration.
-- Upgrading TokenSaver does not reset user choices unexpectedly.
+- install → connect → use → disconnect → uninstall leaves Codex usable with its prior configuration
+- upgrades do not silently reset user choices
 
 ---
 
 # Phase 8 — Hardening and release gates
 
-**Goal:** make long-running use safe, predictable, and measurable.
+**Goal:** make long-running production use safe and measurable.
 
-## Reliability
+Reliability:
 
-- malformed request handling
-- fail-original behavior on classifier/parser errors
-- very large result tests
-- large request-body tests
-- memory-pressure tests
-- concurrent request tests
-- interrupted stream tests
-- service restart tests
-- Codex restart tests
-- machine reboot/start-at-login tests
+- malformed requests
+- fail-original parser/classifier errors
+- huge outputs/request bodies
+- memory pressure
+- concurrent requests
+- interrupted streams
+- TokenSaver/Codex restart
+- machine reboot/start-at-login
 
-## Security/privacy
+Security/privacy:
 
-- loopback-only service by default
-- strict local request authentication/capability if required by the final transport design
-- no arbitrary browser access
-- sensitive state stored with owner-only permissions
+- loopback-only by default
+- strict local caller protection as required
+- no permissive browser/CORS access
+- owner-only sensitive state
 - no auth tokens in logs
-- no tool-result bodies in telemetry by default
-- bounded log/state growth
-- safe temporary-file handling
+- no original result bodies in telemetry by default
+- bounded logs/state
+- safe temporary files
 
-## Performance
+Performance:
 
-- optimizer overhead materially below the context it saves
-- avoid unnecessary whole-payload copies for very large results
-- benchmark request serialization/decompression overhead
-- ensure tray/status polling does not create meaningful CPU or disk load
+- optimizer overhead materially lower than saved context
+- avoid unnecessary copies of huge results
+- benchmark compression/serialization overhead
+- tray/status polling must remain lightweight
 
-## Compatibility
+Compatibility:
 
-Define a supported Codex version matrix rather than assuming every future client uses the same transport/config schema.
+- explicit supported Codex version/config matrix
+- unsupported builds are detected, not guessed
+- unsafe automatic config changes are refused
 
-On an unsupported Codex build:
+Release candidate gates:
 
-- detect it
-- refuse unsafe automatic configuration changes
-- explain the compatibility problem
-- never guess a replacement config layout
-
-### Release gates
-
-A release candidate must pass:
-
-1. deterministic aging unit suite
-2. transport integration suite
-3. config connect/disconnect restoration suite
-4. real Codex smoke test
-5. compaction-bypass test
-6. ON/OFF payload-diff invariant test
-7. tray/backend state-consistency test
-8. privacy/log-redaction test
-9. install/uninstall round-trip
-10. realistic long-session savings benchmark
+1. deterministic aging suite
+2. architecture-contract suite
+3. transport integration suite
+4. config restoration/drift suite
+5. real Codex smoke test
+6. conversation-compaction bypass test
+7. ON/OFF payload-diff invariant test
+8. tray/backend state-consistency test
+9. privacy/log-redaction test
+10. install/uninstall round-trip
+11. realistic long-session savings benchmark
 
 ---
 
-# Post-MVP ideas — only if they remain inside TokenSaver's scope
+# Post-MVP ideas — only if they remain in scope
 
 Possible later improvements:
 
 - per-tool thresholds
-- adaptive thresholds informed by real workload telemetry
+- adaptive thresholds based on real workload telemetry
 - structured compaction for safely parsed repetitive logs
-- tokenizer-aware savings estimates for selected models
+- tokenizer-aware estimates
 - bounded owner-local exact-result retention with strict privacy controls
 - adapters for other Responses-compatible coding agents
-- richer local statistics/history view
+- richer local statistics/history
 - Windows/Linux support
 
-Every proposal must pass the same scope test:
+Every proposal must pass:
 
 > Does this directly improve safe context/token reduction, transparent Codex integration, or operation/observability of that mechanism?
 
@@ -671,7 +533,7 @@ TokenSaver will not become:
 
 - a multi-provider model router
 - an external-model catalog
-- an API-key manager for model providers
+- a provider API-key manager
 - a LiteLLM replacement
 - a model picker
 - an agent orchestrator
@@ -679,6 +541,6 @@ TokenSaver will not become:
 - a prompt marketplace
 - a general Codex configuration manager
 
-The intended product remains simple:
+The intended product remains:
 
 > **Run normal Codex through a small local context optimizer, safely compact old consumed tool results, show the user what was saved, and otherwise stay out of the way.**
