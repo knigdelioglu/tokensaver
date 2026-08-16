@@ -5,23 +5,24 @@ use std::sync::Arc;
 
 use axum::body::{to_bytes, Body};
 use axum::extract::State;
-use axum::http::header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, TRANSFER_ENCODING, UPGRADE};
+use axum::http::header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, UPGRADE};
 use axum::http::{HeaderMap, Method, Request, Response, StatusCode};
 use axum::routing::any;
 use axum::Router;
 use futures_util::StreamExt;
 use reqwest::redirect::Policy;
 use tokio::net::TcpListener;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 
 use crate::modules::aging::AgingPolicy;
 
 use super::capability::CallerCapability;
-use super::compression::MAX_DECODED_BODY_BYTES;
 use super::headers::{has_browser_origin, native_upstream_headers};
+use super::observation::TransportObservation;
 use super::request::prepare_responses_body;
 
 const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
+const OPENAI_API_BASE_URL: &str = "https://api.openai.com/v1";
 const MAX_ENCODED_BODY_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
@@ -30,16 +31,48 @@ pub(crate) struct TransportSettings {
     pub(crate) upstream_base_url: String,
     pub(crate) capability: CallerCapability,
     pub(crate) aging_policy: AgingPolicy,
+    pub(crate) observer: Option<mpsc::UnboundedSender<TransportObservation>>,
 }
 
 impl TransportSettings {
     pub(crate) fn native_chatgpt(bind_port: u16, aging_policy: AgingPolicy) -> Self {
+        Self::native_chatgpt_with_capability(
+            bind_port,
+            CallerCapability::generate(),
+            aging_policy,
+        )
+    }
+
+    pub(crate) fn native_chatgpt_with_capability(
+        bind_port: u16,
+        capability: CallerCapability,
+        aging_policy: AgingPolicy,
+    ) -> Self {
         Self {
             bind_port,
             upstream_base_url: CHATGPT_CODEX_BASE_URL.to_owned(),
+            capability,
+            aging_policy,
+            observer: None,
+        }
+    }
+
+    pub(crate) fn native_openai_api(bind_port: u16, aging_policy: AgingPolicy) -> Self {
+        Self {
+            bind_port,
+            upstream_base_url: OPENAI_API_BASE_URL.to_owned(),
             capability: CallerCapability::generate(),
             aging_policy,
+            observer: None,
         }
+    }
+
+    pub(crate) fn with_observer(
+        mut self,
+        observer: mpsc::UnboundedSender<TransportObservation>,
+    ) -> Self {
+        self.observer = Some(observer);
+        self
     }
 }
 
@@ -91,6 +124,7 @@ impl BoundTransport {
             upstream_base_url: settings.upstream_base_url.trim_end_matches('/').to_owned(),
             capability: settings.capability.clone(),
             aging_policy: aging_policy.clone(),
+            observer: settings.observer,
             client,
         });
         let control = TransportControl {
@@ -125,6 +159,7 @@ struct ServerState {
     upstream_base_url: String,
     capability: CallerCapability,
     aging_policy: Arc<RwLock<AgingPolicy>>,
+    observer: Option<mpsc::UnboundedSender<TransportObservation>>,
     client: reqwest::Client,
 }
 
@@ -175,6 +210,9 @@ async fn handle_request(
         return empty_response(StatusCode::NOT_FOUND);
     }
 
+    // Current Codex advertises WebSocket support for the built-in OpenAI
+    // provider even when openai_base_url is overridden. TokenSaver intentionally
+    // serves HTTP only and asks Codex to fall back to the HTTP Responses path.
     if request.headers().get(UPGRADE).is_some() {
         return empty_response(StatusCode::UPGRADE_REQUIRED);
     }
@@ -187,10 +225,13 @@ async fn handle_request(
 
     let query = request.uri().query().map(str::to_owned);
     let inbound_headers = request.headers().clone();
-    let content_encoding = inbound_headers
-        .get(CONTENT_ENCODING)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned);
+    let content_encoding = match inbound_headers.get(CONTENT_ENCODING) {
+        None => None,
+        Some(value) => match value.to_str() {
+            Ok(value) => Some(value.to_owned()),
+            Err(_) => return empty_response(StatusCode::BAD_REQUEST),
+        },
+    };
     let body = match to_bytes(request.into_body(), MAX_ENCODED_BODY_BYTES).await {
         Ok(body) => body,
         Err(_) => return empty_response(StatusCode::PAYLOAD_TOO_LARGE),
@@ -204,10 +245,19 @@ async fn handle_request(
         policy,
     );
 
+    if let Some(observer) = &state.observer {
+        let _ = observer.send(TransportObservation {
+            outcome: prepared.outcome,
+            aging_stats: prepared.aging.stats.clone(),
+        });
+    }
+
     let mut headers = native_upstream_headers(&inbound_headers);
     if let Some(content_encoding) = content_encoding {
         if let Ok(value) = content_encoding.parse() {
             headers.insert(CONTENT_ENCODING, value);
+        } else {
+            return empty_response(StatusCode::BAD_REQUEST);
         }
     }
 
@@ -281,17 +331,11 @@ fn is_hop_by_hop_response_header(name: &str) -> bool {
             | "transfer-encoding"
             | "upgrade"
             | "content-length"
-    ) || name.eq_ignore_ascii_case(TRANSFER_ENCODING.as_str())
-        || name.eq_ignore_ascii_case(CONTENT_LENGTH.as_str())
+    ) || name.eq_ignore_ascii_case(CONTENT_LENGTH.as_str())
 }
 
 fn empty_response(status: StatusCode) -> Response<Body> {
     let mut response = Response::new(Body::empty());
     *response.status_mut() = status;
     response
-}
-
-#[allow(dead_code)]
-fn _decoded_body_limit_documentation() -> usize {
-    MAX_DECODED_BODY_BYTES
 }
