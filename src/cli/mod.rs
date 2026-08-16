@@ -53,6 +53,7 @@ async fn run_async(args: Vec<String>) -> Result<i32, Box<dyn Error>> {
         "disconnect" => runtime_mutation(ControlRequest::Disconnect).await,
         "saving" => saving(&args[1..]).await,
         "stats" => stats().await,
+        "diagnostics" => diagnostics(),
         "config" => config(&args[1..]).await,
         "doctor" => doctor().await,
         "uninstall" => uninstall(&args[1..]).await,
@@ -137,6 +138,7 @@ async fn stats() -> Result<i32, Box<dyn Error>> {
         print_savings_control(&snapshot.today);
         println!("All time");
         print_savings_control(&snapshot.all_time);
+        println!("Run `tokensaver diagnostics` for persisted request-shape, skip-reason, provider-token, and cache evidence.");
         return Ok(0);
     }
 
@@ -146,6 +148,17 @@ async fn stats() -> Result<i32, Box<dyn Error>> {
     print_savings_stored(stored.today);
     println!("All time");
     print_savings_stored(stored.all_time);
+    Ok(0)
+}
+
+fn diagnostics() -> Result<i32, Box<dyn Error>> {
+    let stored = load_product_stats()?;
+    println!("Content-free optimizer diagnostics");
+    println!("Persisted counters flush periodically while the menu-bar runtime is active; no prompt/tool-result body is stored.");
+    println!("Today");
+    print_diagnostics_stored(stored.today);
+    println!("All time");
+    print_diagnostics_stored(stored.all_time);
     Ok(0)
 }
 
@@ -374,14 +387,73 @@ fn print_savings_stored(savings: StoredSavingsView) {
         "  estimated tokens saved: ~{}",
         format_count(savings.estimated_tokens_saved)
     );
+    if savings.provider_usage_events > 0 {
+        println!(
+            "  provider tokens input / cached / output: {} / {} / {} ({} usage events)",
+            savings.provider_input_tokens,
+            savings.provider_cached_input_tokens,
+            savings.provider_output_tokens,
+            savings.provider_usage_events
+        );
+    }
+}
+
+fn print_diagnostics_stored(savings: StoredSavingsView) {
+    println!(
+        "  Responses with / without previous_response_id: {} / {}",
+        savings.responses_with_previous_response_id,
+        savings.responses_without_previous_response_id
+    );
+    println!(
+        "  previous_response_id preserved: {}",
+        savings.previous_response_id_preserved
+    );
+    println!("  aging pass ran: {}", savings.aging_pass_ran);
+    println!("  input items observed: {}", savings.input_items);
+    println!(
+        "  function/custom tool-result items: {} / {}",
+        savings.function_call_outputs, savings.custom_tool_call_outputs
+    );
+    println!(
+        "  textual tool-result bytes seen: {} · largest result: {}",
+        format_bytes(savings.textual_tool_result_bytes_seen),
+        format_bytes(savings.largest_tool_result_bytes)
+    );
+    println!(
+        "  skip reasons — frontier: {} · <= threshold: {} · unconsumed: {} · unsupported: {} · receipt-not-smaller: {}",
+        savings.protected_frontier,
+        savings.at_or_below_threshold,
+        savings.unconsumed,
+        savings.unsupported_output,
+        savings.receipt_not_smaller
+    );
+    if savings.provider_usage_events == 0 {
+        println!("  provider usage: not observed");
+    } else {
+        println!(
+            "  provider usage: input {} · cached {} · output {} · {} events",
+            format_count(savings.provider_input_tokens),
+            format_count(savings.provider_cached_input_tokens),
+            format_count(savings.provider_output_tokens),
+            savings.provider_usage_events
+        );
+    }
+    println!(
+        "  cache aged: {} (n={}) · unaged: {} (n={})",
+        format_rate(savings.aged_cache_rate_basis_points),
+        savings.aged_cache_events,
+        format_rate(savings.unaged_cache_rate_basis_points),
+        savings.unaged_cache_events
+    );
 }
 
 fn print_help() {
     println!(
         "TokenSaver {VERSION}\n\n\
-Usage:\n  tokensaver status\n  tokensaver connect\n  tokensaver disconnect\n  tokensaver saving <on|off>\n  tokensaver stats\n  tokensaver config show\n  tokensaver config set min-bytes <bytes>\n  tokensaver config set frontier <count>\n  tokensaver config set preview-code-units <count>\n  tokensaver doctor\n  tokensaver uninstall [--purge-state]\n  tokensaver version\n\n\
+Usage:\n  tokensaver status\n  tokensaver connect\n  tokensaver disconnect\n  tokensaver saving <on|off>\n  tokensaver stats\n  tokensaver diagnostics\n  tokensaver config show\n  tokensaver config set min-bytes <bytes>\n  tokensaver config set frontier <count>\n  tokensaver config set preview-code-units <count>\n  tokensaver doctor\n  tokensaver uninstall [--purge-state]\n  tokensaver version\n\n\
 `connect`, `disconnect`, and `saving` control the running menu-bar runtime.\n\
-`stats` and `config` can also read persisted owner-local state while the runtime is closed.\n\
+`stats`, `diagnostics`, and `config` can also read persisted owner-local state while the runtime is closed.\n\
+`diagnostics` prints content-free request-shape, skip-reason, provider-token, and cache evidence; it never prints prompt or tool-result text.\n\
 `uninstall` explains the safe detach flow; `--purge-state` is destructive and only works after the menu-bar runtime has exited."
     );
 }
@@ -418,4 +490,11 @@ fn format_count(value: u64) -> String {
     } else {
         value.to_string()
     }
+}
+
+fn format_rate(basis_points: Option<u64>) -> String {
+    let Some(value) = basis_points else {
+        return "n/a".to_owned();
+    };
+    format!("{}.{:02}%", value / 100, value % 100)
 }
