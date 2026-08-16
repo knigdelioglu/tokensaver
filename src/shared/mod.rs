@@ -2,6 +2,7 @@
 //!
 //! `shared` is not a home for domain logic. Only concerns that are genuinely
 //! cross-cutting and low-level belong here, such as common error primitives,
-//! filesystem safety helpers, or security utilities introduced by later phases.
+//! filesystem safety helpers, and outward secret-redaction utilities.
 
 pub(crate) mod filesystem;
+pub(crate) mod security;
