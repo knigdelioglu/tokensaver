@@ -60,7 +60,11 @@ impl std::error::Error for CodexConnectionError {
     }
 }
 
-/// Prepare TokenSaver for the native ChatGPT/Codex backend.
+/// Prepare TokenSaver for the built-in OpenAI provider used by Codex.
+///
+/// The transport preserves Codex's auth-mode distinction at request time:
+/// account-scoped requests go to the ChatGPT Codex backend; API-key-style
+/// requests go to the OpenAI API backend.
 ///
 /// Ordering is intentional:
 /// 1. resolve/recover the exact TokenSaver endpoint,
@@ -69,13 +73,13 @@ impl std::error::Error for CodexConnectionError {
 /// 4. point Codex at the already-bound endpoint.
 ///
 /// No server task is spawned here. The runtime layer owns task supervision.
-pub(crate) async fn prepare_native_chatgpt_connection(
+pub(crate) async fn prepare_native_codex_connection(
     snapshot_path: impl AsRef<Path>,
     requested_port: u16,
     aging_policy: AgingPolicy,
 ) -> Result<PreparedCodexConnection, CodexConnectionError> {
     let config_path = codex_config_path().map_err(CodexConnectionError::CodexPath)?;
-    prepare_native_chatgpt_connection_at(
+    prepare_native_codex_connection_at(
         config_path,
         snapshot_path.as_ref().to_path_buf(),
         requested_port,
@@ -84,7 +88,7 @@ pub(crate) async fn prepare_native_chatgpt_connection(
     .await
 }
 
-pub(super) async fn prepare_native_chatgpt_connection_at(
+pub(super) async fn prepare_native_codex_connection_at(
     config_path: PathBuf,
     snapshot_path: PathBuf,
     requested_port: u16,
@@ -95,9 +99,9 @@ pub(super) async fn prepare_native_chatgpt_connection_at(
         let endpoint = snapshot.installed_openai_base_url.clone();
         let (port, capability) = CallerCapability::from_loopback_base_url(&endpoint)
             .ok_or_else(|| CodexConnectionError::InvalidPersistedEndpoint(endpoint.clone()))?;
-        TransportSettings::native_chatgpt_with_capability(port, capability, aging_policy)
+        TransportSettings::native_codex_with_capability(port, capability, aging_policy)
     } else {
-        TransportSettings::native_chatgpt(requested_port, aging_policy)
+        TransportSettings::native_codex(requested_port, aging_policy)
     };
 
     let (observation_tx, observation_rx) = mpsc::unbounded_channel();
@@ -136,7 +140,7 @@ mod tests {
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use super::{disconnect_native_codex, prepare_native_chatgpt_connection_at};
+    use super::{disconnect_native_codex, prepare_native_codex_connection_at};
     use crate::modules::aging::AgingPolicy;
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -159,7 +163,7 @@ mod tests {
         let original = "model = \"gpt-test\"\n[mcp_servers.demo]\ncommand = \"demo\"\n";
         fs::write(&config, original).expect("write config");
 
-        let prepared = prepare_native_chatgpt_connection_at(
+        let prepared = prepare_native_codex_connection_at(
             config.clone(),
             snapshot_path.clone(),
             0,
@@ -189,7 +193,7 @@ mod tests {
         let (root, config, snapshot_path) = temp_paths();
         fs::write(&config, "model = \"gpt-test\"\n").expect("write config");
 
-        let first = prepare_native_chatgpt_connection_at(
+        let first = prepare_native_codex_connection_at(
             config.clone(),
             snapshot_path.clone(),
             0,
@@ -200,7 +204,7 @@ mod tests {
         let first_endpoint = first.control.codex_base_url();
         drop(first);
 
-        let second = prepare_native_chatgpt_connection_at(
+        let second = prepare_native_codex_connection_at(
             config.clone(),
             snapshot_path.clone(),
             0,
