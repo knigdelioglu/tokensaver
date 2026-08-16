@@ -4,7 +4,7 @@ use std::io;
 use std::path::Path;
 
 use crate::modules::runtime::{RuntimePreferencesError, RuntimePreferencesStore};
-use crate::shared::paths::product_data_dir;
+use crate::shared::paths::ensure_product_data_dir;
 
 const PREFERENCES_FILE: &str = "runtime-preferences.json";
 
@@ -57,7 +57,7 @@ impl From<RuntimePreferencesError> for SettingsError {
 }
 
 pub(crate) fn load_product_settings() -> Result<SettingsSnapshot, SettingsError> {
-    let data_dir = product_data_dir()?;
+    let data_dir = ensure_product_data_dir()?;
     load_settings(&data_dir)
 }
 
@@ -65,7 +65,7 @@ pub(crate) fn set_product_numeric_setting(
     key: &str,
     value: usize,
 ) -> Result<SettingsSnapshot, SettingsError> {
-    let data_dir = product_data_dir()?;
+    let data_dir = ensure_product_data_dir()?;
     set_numeric_setting_offline(&data_dir, key, value)
 }
 
