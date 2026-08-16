@@ -12,7 +12,7 @@
   "bundle": {
     "active": false,
     "targets": ["app", "dmg"],
-    "icon": [],
+    "icon": ["assets/app-icon.png"],
     "category": "DeveloperTool",
     "shortDescription": "Local context optimizer for Codex",
     "longDescription": "TokenSaver reduces repeated Codex input context by safely compacting eligible historical tool results while preserving native Codex behavior.",
