@@ -42,14 +42,17 @@ pub(crate) fn prepare_responses_body(
     upstream_path: &str,
     policy: AgingPolicy,
 ) -> PreparedRequestBody {
-    if !policy.enabled {
-        return PreparedRequestBody::original(encoded_body, PreparationOutcome::Disabled);
-    }
+    // Endpoint classification is independent of the saving toggle. Native
+    // passthrough and explicit Codex compaction remain distinguishable in
+    // diagnostics even when saving is disabled.
     if is_compaction_path(upstream_path) {
         return PreparedRequestBody::original(encoded_body, PreparationOutcome::CompactionBypass);
     }
     if !is_responses_path(upstream_path) {
         return PreparedRequestBody::original(encoded_body, PreparationOutcome::NativePassthrough);
+    }
+    if !policy.enabled {
+        return PreparedRequestBody::original(encoded_body, PreparationOutcome::Disabled);
     }
 
     match try_prepare(encoded_body, content_encoding, policy) {
