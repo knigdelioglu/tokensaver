@@ -13,7 +13,10 @@ mod model;
 mod policy;
 mod receipt;
 
-pub(crate) use engine::{age_tool_results, AgedReplacement, AgingResult, AgingStats};
+pub(crate) use engine::{
+    age_tool_results, AgedReplacement, AgingDecision, AgingResult, AgingSkipReason, AgingStats,
+    ToolResultEvaluation,
+};
 pub(crate) use model::{HistoryItem, ToolOutput, ToolResultKind};
 pub(crate) use policy::{
     AgingPolicy, DEFAULT_FRONTIER, DEFAULT_MIN_BYTES, DEFAULT_PREVIEW_CODE_UNITS,
