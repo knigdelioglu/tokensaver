@@ -3,20 +3,24 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
 use toml_edit::{value, DocumentMut, Item};
 
 use crate::shared::filesystem::atomic_write_private;
 
 const OWNED_KEY: &str = "openai_base_url";
+const SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "state", content = "value")]
 pub(crate) enum OriginalOpenAiBaseUrl {
     Absent,
     Value(String),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct CodexConfigSnapshot {
+    schema_version: u32,
     pub(crate) original_openai_base_url: OriginalOpenAiBaseUrl,
     pub(crate) installed_openai_base_url: String,
 }
@@ -33,6 +37,8 @@ pub(crate) enum CodexConfigError {
     InvalidToml(String),
     UnsupportedOpenAiBaseUrlType,
     UnsafeLoopbackUrl(String),
+    SnapshotFormat(String),
+    UnsupportedSnapshotVersion(u32),
     Drift {
         expected: String,
         actual: Option<String>,
@@ -49,6 +55,10 @@ impl fmt::Display for CodexConfigError {
             }
             Self::UnsafeLoopbackUrl(url) => {
                 write!(formatter, "TokenSaver base URL is not loopback-only: {url}")
+            }
+            Self::SnapshotFormat(error) => write!(formatter, "invalid TokenSaver config snapshot: {error}"),
+            Self::UnsupportedSnapshotVersion(version) => {
+                write!(formatter, "unsupported TokenSaver config snapshot version: {version}")
             }
             Self::Drift { expected, actual } => write!(
                 formatter,
@@ -92,6 +102,7 @@ pub(crate) fn disconnect_config_file(
     path: &Path,
     snapshot: &CodexConfigSnapshot,
 ) -> Result<(), CodexConfigError> {
+    validate_snapshot(snapshot)?;
     let source = fs::read_to_string(path)?;
     let next = disconnect_config_text(&source, snapshot)?;
     atomic_write_private(path, &next)?;
@@ -102,6 +113,7 @@ pub(crate) fn connection_state_file(
     path: &Path,
     snapshot: &CodexConfigSnapshot,
 ) -> Result<CodexConnectionState, CodexConfigError> {
+    validate_snapshot(snapshot)?;
     let source = match fs::read_to_string(path) {
         Ok(source) => source,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -110,6 +122,25 @@ pub(crate) fn connection_state_file(
         Err(error) => return Err(CodexConfigError::Io(error)),
     };
     connection_state_text(&source, snapshot)
+}
+
+pub(crate) fn save_config_snapshot(
+    path: &Path,
+    snapshot: &CodexConfigSnapshot,
+) -> Result<(), CodexConfigError> {
+    validate_snapshot(snapshot)?;
+    let serialized = serde_json::to_string_pretty(snapshot)
+        .map_err(|error| CodexConfigError::SnapshotFormat(error.to_string()))?;
+    atomic_write_private(path, &serialized)?;
+    Ok(())
+}
+
+pub(crate) fn load_config_snapshot(path: &Path) -> Result<CodexConfigSnapshot, CodexConfigError> {
+    let source = fs::read_to_string(path)?;
+    let snapshot = serde_json::from_str::<CodexConfigSnapshot>(&source)
+        .map_err(|error| CodexConfigError::SnapshotFormat(error.to_string()))?;
+    validate_snapshot(&snapshot)?;
+    Ok(snapshot)
 }
 
 pub(super) fn connect_config_text(
@@ -122,6 +153,7 @@ pub(super) fn connect_config_text(
 
     document[OWNED_KEY] = value(loopback_base_url);
     let snapshot = CodexConfigSnapshot {
+        schema_version: SNAPSHOT_SCHEMA_VERSION,
         original_openai_base_url: original,
         installed_openai_base_url: loopback_base_url.to_owned(),
     };
@@ -132,6 +164,7 @@ pub(super) fn disconnect_config_text(
     source: &str,
     snapshot: &CodexConfigSnapshot,
 ) -> Result<String, CodexConfigError> {
+    validate_snapshot(snapshot)?;
     let mut document = parse_document(source)?;
     let current = read_current_string(&document)?;
 
@@ -158,6 +191,7 @@ pub(super) fn connection_state_text(
     source: &str,
     snapshot: &CodexConfigSnapshot,
 ) -> Result<CodexConnectionState, CodexConfigError> {
+    validate_snapshot(snapshot)?;
     let document = parse_document(source)?;
     let current = read_current_string(&document)?;
     if current.as_deref() == Some(snapshot.installed_openai_base_url.as_str()) {
@@ -202,14 +236,25 @@ fn read_current_string(document: &DocumentMut) -> Result<Option<String>, CodexCo
     }
 }
 
+fn validate_snapshot(snapshot: &CodexConfigSnapshot) -> Result<(), CodexConfigError> {
+    if snapshot.schema_version == SNAPSHOT_SCHEMA_VERSION {
+        Ok(())
+    } else {
+        Err(CodexConfigError::UnsupportedSnapshotVersion(
+            snapshot.schema_version,
+        ))
+    }
+}
+
 fn validate_loopback_base_url(url: &str) -> Result<(), CodexConfigError> {
     let safe_prefix = url.starts_with("http://127.0.0.1:") || url.starts_with("http://[::1]:");
     let has_capability_path = url
         .split_once("//")
         .and_then(|(_, rest)| rest.split_once('/'))
-        .is_some_and(|(_, path)| !path.is_empty() && !path.contains(char::is_whitespace));
+        .is_some_and(|(_, path)| !path.is_empty() && !path.chars().any(char::is_whitespace));
+    let has_forbidden_suffix = url.contains('?') || url.contains('#');
 
-    if safe_prefix && has_capability_path && !url.contains(['?', '#']) {
+    if safe_prefix && has_capability_path && !has_forbidden_suffix {
         Ok(())
     } else {
         Err(CodexConfigError::UnsafeLoopbackUrl(url.to_owned()))
