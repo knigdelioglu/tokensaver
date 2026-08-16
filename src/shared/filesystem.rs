@@ -1,6 +1,9 @@
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 /// Atomically replace a user-owned text file while keeping temporary bytes in
 /// the same directory. Same-directory rename avoids exposing a partially
@@ -58,5 +61,8 @@ fn temporary_path(path: &Path) -> PathBuf {
         .and_then(|name| name.to_str())
         .unwrap_or("config.toml");
     let process_id = std::process::id();
-    path.with_file_name(format!(".{file_name}.tokensaver-{process_id}.tmp"))
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    path.with_file_name(format!(
+        ".{file_name}.tokensaver-{process_id}-{sequence}.tmp"
+    ))
 }
