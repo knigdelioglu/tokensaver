@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::{
-    model::HistoryItem,
+    model::{HistoryItem, ToolResultKind},
     policy::AgingPolicy,
     receipt::build_receipt,
 };
@@ -17,11 +17,13 @@ pub(crate) struct AgingStats {
 /// A transport-neutral instruction to replace only the model-visible output of
 /// one normalized historical tool-result item.
 ///
-/// `source_call_id` lets the adapter validate it is still applying the decision
-/// to the same call/result pair before mutating the original protocol object.
+/// The item index, result kind, and call ID form a validation tuple. A transport
+/// adapter must confirm that tuple still identifies the same original item
+/// before applying the receipt; otherwise it must fail original.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AgedReplacement {
     pub(crate) item_index: usize,
+    pub(crate) source_kind: ToolResultKind,
     pub(crate) source_call_id: Option<String>,
     pub(crate) receipt: String,
     pub(crate) bytes_before: usize,
@@ -57,7 +59,7 @@ pub(crate) fn age_tool_results(input: &[HistoryItem], policy: AgingPolicy) -> Ag
             continue;
         }
 
-        let Some((_kind, call_id, output)) = item.tool_result() else {
+        let Some((kind, call_id, output)) = item.tool_result() else {
             continue;
         };
         let Some(text) = output.textual_value() else {
@@ -79,6 +81,7 @@ pub(crate) fn age_tool_results(input: &[HistoryItem], policy: AgingPolicy) -> Ag
 
         replacements.push(AgedReplacement {
             item_index: index,
+            source_kind: kind,
             source_call_id: call_id.map(str::to_owned),
             receipt,
             bytes_before: before,
