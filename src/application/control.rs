@@ -1,6 +1,7 @@
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +13,8 @@ use super::desktop_runtime::{
 };
 
 const MAX_CONTROL_MESSAGE_BYTES: usize = 64 * 1024;
+const MAX_CONTROL_CLIENTS: usize = 16;
+const CONTROL_IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "command", rename_all = "snake_case")]
@@ -84,6 +87,7 @@ impl ControlResponse {
 pub(crate) enum ControlError {
     UnsupportedPlatform,
     RuntimeAlreadyActive,
+    Timeout(&'static str),
     Io(io::Error),
     Protocol(String),
 }
@@ -96,6 +100,9 @@ impl fmt::Display for ControlError {
             }
             Self::RuntimeAlreadyActive => {
                 write!(formatter, "a TokenSaver control runtime is already active")
+            }
+            Self::Timeout(operation) => {
+                write!(formatter, "control channel timed out during {operation}")
             }
             Self::Io(error) => write!(formatter, "control channel I/O failed: {error}"),
             Self::Protocol(error) => write!(formatter, "control protocol failed: {error}"),
@@ -125,9 +132,12 @@ pub(crate) async fn serve_control_socket(
 ) -> Result<(), ControlError> {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::Arc;
 
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::{UnixListener, UnixStream};
+    use tokio::sync::Semaphore;
+    use tokio::time::timeout;
 
     let parent = socket_path.parent().ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidInput, "control socket path has no parent")
@@ -136,9 +146,9 @@ pub(crate) async fn serve_control_socket(
     fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
 
     if socket_path.exists() {
-        match UnixStream::connect(&socket_path).await {
-            Ok(_) => return Err(ControlError::RuntimeAlreadyActive),
-            Err(_) => {
+        match timeout(CONTROL_IO_TIMEOUT, UnixStream::connect(&socket_path)).await {
+            Ok(Ok(_)) => return Err(ControlError::RuntimeAlreadyActive),
+            Ok(Err(_)) | Err(_) => {
                 let _ = fs::remove_file(&socket_path);
             }
         }
@@ -146,35 +156,42 @@ pub(crate) async fn serve_control_socket(
 
     let listener = UnixListener::bind(&socket_path)?;
     fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
+    let clients = Arc::new(Semaphore::new(MAX_CONTROL_CLIENTS));
 
     loop {
         let (stream, _) = listener.accept().await?;
+        let Ok(permit) = clients.clone().try_acquire_owned() else {
+            drop(stream);
+            continue;
+        };
         let controller = controller.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             let (reader, mut writer) = stream.into_split();
             let mut limited = BufReader::new(reader).take((MAX_CONTROL_MESSAGE_BYTES + 1) as u64);
             let mut line = String::new();
-            let response = match limited.read_line(&mut line).await {
-                Ok(0) => ControlResponse::failure("empty control request", None),
-                Ok(_) if line.len() > MAX_CONTROL_MESSAGE_BYTES => {
+            let response = match timeout(CONTROL_IO_TIMEOUT, limited.read_line(&mut line)).await {
+                Err(_) => ControlResponse::failure("control read timed out", None),
+                Ok(Ok(0)) => ControlResponse::failure("empty control request", None),
+                Ok(Ok(_)) if line.len() > MAX_CONTROL_MESSAGE_BYTES => {
                     ControlResponse::failure("control request exceeds size limit", None)
                 }
-                Ok(_) => match serde_json::from_str::<ControlRequest>(line.trim_end()) {
+                Ok(Ok(_)) => match serde_json::from_str::<ControlRequest>(line.trim_end()) {
                     Ok(request) => handle_request(&controller, request).await,
                     Err(error) => ControlResponse::failure(
                         format!("invalid control request: {error}"),
                         None,
                     ),
                 },
-                Err(error) => {
+                Ok(Err(error)) => {
                     ControlResponse::failure(format!("control read failed: {error}"), None)
                 }
             };
 
             if let Ok(mut encoded) = serde_json::to_vec(&response) {
                 encoded.push(b'\n');
-                let _ = writer.write_all(&encoded).await;
-                let _ = writer.shutdown().await;
+                let _ = timeout(CONTROL_IO_TIMEOUT, writer.write_all(&encoded)).await;
+                let _ = timeout(CONTROL_IO_TIMEOUT, writer.shutdown()).await;
             }
         });
     }
@@ -195,18 +212,27 @@ pub(crate) async fn send_control_request(
 ) -> Result<ControlResponse, ControlError> {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixStream;
+    use tokio::time::timeout;
 
-    let stream = UnixStream::connect(socket_path).await?;
+    let stream = timeout(CONTROL_IO_TIMEOUT, UnixStream::connect(socket_path))
+        .await
+        .map_err(|_| ControlError::Timeout("connect"))??;
     let (reader, mut writer) = stream.into_split();
     let mut encoded = serde_json::to_vec(request)
         .map_err(|error| ControlError::Protocol(error.to_string()))?;
     encoded.push(b'\n');
-    writer.write_all(&encoded).await?;
-    writer.shutdown().await?;
+    timeout(CONTROL_IO_TIMEOUT, writer.write_all(&encoded))
+        .await
+        .map_err(|_| ControlError::Timeout("request write"))??;
+    timeout(CONTROL_IO_TIMEOUT, writer.shutdown())
+        .await
+        .map_err(|_| ControlError::Timeout("request shutdown"))??;
 
     let mut limited = BufReader::new(reader).take((MAX_CONTROL_MESSAGE_BYTES + 1) as u64);
     let mut line = String::new();
-    limited.read_line(&mut line).await?;
+    timeout(CONTROL_IO_TIMEOUT, limited.read_line(&mut line))
+        .await
+        .map_err(|_| ControlError::Timeout("response read"))??;
     if line.is_empty() {
         return Err(ControlError::Protocol("runtime returned no response".to_owned()));
     }
