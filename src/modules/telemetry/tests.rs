@@ -11,6 +11,7 @@ fn metrics(saved: u64) -> OptimizationMetrics {
         bytes_before: 100_000,
         bytes_after: 4_000,
         bytes_saved: saved,
+        ..OptimizationMetrics::default()
     }
 }
 
@@ -70,13 +71,14 @@ fn aggregates_session_and_time_ranges() {
 }
 
 #[test]
-fn provider_usage_stays_separate_from_estimated_savings() {
+fn provider_usage_stays_separate_from_estimated_savings_and_populates_aged_cache() {
     let mut ledger = SavingsLedger::default();
     ledger.record(
         OptimizationEvent::new(1_000, 1, OptimizationOutcome::Aged, metrics(96_000))
             .with_provider_usage(ProviderUsage {
                 input_tokens: 10_000,
                 cached_input_tokens: 8_000,
+                output_tokens: 700,
             }),
     );
 
@@ -84,7 +86,33 @@ fn provider_usage_stays_separate_from_estimated_savings() {
     assert_eq!(summary.estimated_tokens_saved, 24_000);
     assert_eq!(summary.provider_input_tokens, 10_000);
     assert_eq!(summary.provider_cached_input_tokens, 8_000);
+    assert_eq!(summary.provider_output_tokens, 700);
     assert_eq!(summary.cache_rate_basis_points(), Some(8_000));
+    assert_eq!(summary.aged_cache.usage_events, 1);
+    assert_eq!(summary.aged_cache.rate_basis_points(), Some(8_000));
+    assert_eq!(summary.unaged_cache.usage_events, 0);
+}
+
+#[test]
+fn ordinary_unaged_responses_populate_the_control_cache_bucket() {
+    let mut ledger = SavingsLedger::default();
+    ledger.record(
+        OptimizationEvent::new(
+            1_000,
+            1,
+            OptimizationOutcome::EvaluatedNoEligibleResult,
+            OptimizationMetrics::default(),
+        )
+        .with_provider_usage(ProviderUsage {
+            input_tokens: 2_000,
+            cached_input_tokens: 1_000,
+            output_tokens: 20,
+        }),
+    );
+    let summary = ledger.all_time();
+    assert_eq!(summary.unaged_cache.usage_events, 1);
+    assert_eq!(summary.unaged_cache.rate_basis_points(), Some(5_000));
+    assert_eq!(summary.aged_cache.usage_events, 0);
 }
 
 #[test]

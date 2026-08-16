@@ -10,11 +10,12 @@ mod compression;
 mod headers;
 mod observation;
 mod request;
+mod response_usage;
 mod server;
 
 pub(crate) use capability::CallerCapability;
 pub(crate) use observation::TransportObservation;
-pub(crate) use request::PreparationOutcome;
+pub(crate) use request::{PreparationOutcome, RequestDiagnostics};
 pub(crate) use server::{BoundTransport, TransportControl, TransportError, TransportSettings};
 
 #[cfg(test)]

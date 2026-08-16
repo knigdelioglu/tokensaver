@@ -76,7 +76,7 @@ fn capability_base_url_round_trips_port_secret_and_v1() {
 }
 
 #[test]
-fn disabled_mode_keeps_responses_body_byte_for_byte() {
+fn disabled_mode_keeps_responses_body_byte_for_byte_but_still_inspects_shape() {
     let source = consumed_request_json();
     let policy = AgingPolicy {
         enabled: false,
@@ -87,6 +87,10 @@ fn disabled_mode_keeps_responses_body_byte_for_byte() {
     assert_eq!(prepared.outcome, PreparationOutcome::Disabled);
     assert_eq!(prepared.bytes, source);
     assert!(!prepared.body_changed);
+    let diagnostics = prepared.diagnostics.expect("content-free diagnostics");
+    assert_eq!(diagnostics.function_call_outputs, 1);
+    assert!(diagnostics.textual_tool_result_bytes > 32 * 1024);
+    assert!(!diagnostics.aging_pass_ran);
 }
 
 #[test]
@@ -134,7 +138,27 @@ fn ordinary_responses_request_changes_only_eligible_output_semantically() {
 }
 
 #[test]
-fn mixed_output_is_preserved() {
+fn previous_response_id_is_detected_and_preserved_during_aging() {
+    let mut value: Value = serde_json::from_slice(&consumed_request_json()).expect("fixture");
+    value["previous_response_id"] = Value::String("resp-private-not-logged".to_owned());
+    let source = serde_json::to_vec(&value).expect("serialize chained fixture");
+
+    let prepared = prepare_responses_body(&source, None, "/v1/responses", aging_policy());
+    assert_eq!(prepared.outcome, PreparationOutcome::Aged);
+    let optimized: Value = serde_json::from_slice(&prepared.bytes).expect("optimized");
+    assert_eq!(
+        optimized["previous_response_id"],
+        value["previous_response_id"]
+    );
+
+    let diagnostics = prepared.diagnostics.expect("diagnostics");
+    assert!(diagnostics.has_previous_response_id);
+    assert!(diagnostics.previous_response_id_preserved);
+    assert!(diagnostics.aging_pass_ran);
+}
+
+#[test]
+fn mixed_output_is_preserved_and_skip_reason_is_visible() {
     let source = serde_json::to_vec(&serde_json::json!({
         "input": [
             {
@@ -156,6 +180,13 @@ fn mixed_output_is_preserved() {
         PreparationOutcome::EvaluatedNoEligibleResult
     );
     assert_eq!(prepared.bytes, source);
+    assert_eq!(
+        prepared
+            .diagnostics
+            .expect("diagnostics")
+            .unsupported_output,
+        1
+    );
 }
 
 #[test]

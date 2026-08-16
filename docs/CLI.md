@@ -46,6 +46,7 @@ tokensaver disconnect
 tokensaver saving on
 tokensaver saving off
 tokensaver stats
+tokensaver diagnostics
 tokensaver config show
 tokensaver config set min-bytes <bytes>
 tokensaver config set frontier <count>
@@ -79,6 +80,8 @@ These commands require the menu-bar runtime to be running. They never start a sh
 
 Requires the live runtime. The setting is persisted and the current transport's `enabled` policy flag is updated through the application controller.
 
+A fresh TokenSaver installation defaults saving **off**. An existing persisted choice is preserved. Enabling aging is therefore an explicit operator action.
+
 ### `stats`
 
 When the runtime is live, reports session, today, and all-time values. When the runtime is closed, it reads the persisted content-free aggregate store and reports today/all-time values.
@@ -89,8 +92,29 @@ Output distinguishes:
 - approximate tokens saved, always marked with `~`
 - compacted tool-result count
 - aged request count
+- persisted provider usage when available
 
-A request contributes a transport observation only after the upstream request has returned response headers. An upstream connection failure before that point does not inflate savings.
+Provider usage is emitted after the response stream reaches a terminal state. If the provider did not expose recognized usage fields, the optimization event remains valid and its provider-usage portion is simply absent.
+
+### `diagnostics`
+
+Reads the persisted content-free aggregate store and reports **why** savings did or did not occur.
+
+It includes:
+
+- ordinary Responses count with / without `previous_response_id`
+- count proving the chaining field was preserved
+- count of requests where the aging pass actually ran
+- input item count
+- function/custom tool-result item counts
+- textual tool-result bytes observed and largest result
+- skip reasons: protected frontier, at/below threshold, unconsumed, unsupported, receipt not smaller
+- provider input/cached/output token counts and usage-event count
+- aged and ordinary-unaged cache rates with sample counts
+
+It never prints the value of `previous_response_id`, prompt text, tool-result text, receipt text, model response text, credentials, account IDs, or capability secrets.
+
+The detailed diagnostic surface intentionally lives in the CLI so the menu-bar menu can remain compact. The tray continues to show high-level evaluated / eligible / compacted and savings counters.
 
 ### `config show`
 
@@ -152,15 +176,19 @@ Runtime preferences schema v2 persists:
 - protected result frontier
 - preview code-unit count
 
-Schema v1 preference files remain readable; missing policy fields receive the original conservative defaults and are upgraded on a later write.
+Schema v1 preference files remain readable; missing policy fields receive the original conservative structural defaults and the explicit saving choice is preserved.
 
-Default policy remains:
+Fresh-install product defaults:
 
 ```text
+saving = off
+connect_on_launch = false
 min_bytes = 32768
 frontier = 4
 preview_code_units = 1024
 ```
+
+The pure aging-domain default remains enabled when directly invoked; product opt-in and engine policy are deliberately separate concerns.
 
 Guardrails:
 
@@ -211,6 +239,19 @@ A first-party reachability PASS means an HTTP response was obtained; it does not
 
 The authoritative Start-at-Login state remains the Tauri autostart plugin state shown by the running tray. The CLI doctor does not infer LaunchAgent state from guessed plist names or undocumented plugin internals.
 
+## Live validation helpers
+
+Live token/quality probes are scripts rather than ordinary CLI commands because they can spend provider/account quota and require an explicit `--yes` acknowledgement:
+
+```text
+scripts/live-token-ab.py
+scripts/live-aging-quality.py
+scripts/cache-evidence.py
+scripts/verify-aging-release.py
+```
+
+See `docs/NATIVE_AGING_VALIDATION.md` for their contracts and execution order.
+
 ## Exit codes
 
 - `0` — requested operation/report completed without a failing doctor check
@@ -228,6 +269,7 @@ CLI and doctor output must never print:
 - TokenSaver's 256-bit Codex transport capability
 - original tool-result bodies
 - compact receipt bodies
+- `previous_response_id` values
 - arbitrary Codex configuration contents
 - private expected/actual config values from drift errors
 
@@ -237,4 +279,4 @@ The CLI receives only application DTOs and must not directly inspect module pers
 
 ## Validation status
 
-Implementation and test/architecture sources may be authored during development, but project instruction defers execution. No compile, test, lint, format, Tauri run/build, CI, live doctor, CLI smoke, saturation, compatibility, or release-verification command is considered passed until the final user-requested validation phase.
+P0–P6 implementation and test/architecture sources were authored before execution by explicit project instruction. Compile, test, lint, format, Tauri build/run, CI, live doctor, live provider A/B, cache evidence, and release-gate claims remain unproven until the final requested validation phase executes them.

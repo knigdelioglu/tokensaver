@@ -38,7 +38,11 @@ impl Default for RuntimePreferences {
     fn default() -> Self {
         Self {
             schema_version: PREFERENCES_SCHEMA_VERSION,
-            saving_enabled: true,
+            // TokenSaver rewrites historical context when enabled. A fresh
+            // install therefore starts conservative/off until the operator
+            // explicitly opts in; an existing persisted preference is never
+            // re-defaulted by this release.
+            saving_enabled: false,
             connect_on_launch: false,
             min_bytes: DEFAULT_MIN_BYTES,
             frontier: DEFAULT_FRONTIER,
@@ -234,13 +238,26 @@ mod tests {
     }
 
     #[test]
-    fn legacy_v1_receives_conservative_policy_defaults() {
+    fn fresh_install_defaults_saving_off() {
+        let (root, path) = temp_path("runtime-preferences.json");
+        let store = RuntimePreferencesStore::open(&path).expect("open fresh defaults");
+        let preferences = store.preferences();
+        assert!(!preferences.saving_enabled);
+        assert!(!preferences.connect_on_launch);
+        assert_eq!(preferences.min_bytes, DEFAULT_MIN_BYTES);
+        assert_eq!(preferences.frontier, DEFAULT_FRONTIER);
+        assert_eq!(preferences.preview_code_units, DEFAULT_PREVIEW_CODE_UNITS);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_v1_preserves_explicit_saving_choice_and_receives_policy_defaults() {
         let (root, path) = temp_path("runtime-preferences.json");
         fs::write(
             &path,
             r#"{
   "schema_version": 1,
-  "saving_enabled": false,
+  "saving_enabled": true,
   "connect_on_launch": true
 }"#,
         )
@@ -248,7 +265,7 @@ mod tests {
 
         let store = RuntimePreferencesStore::open(&path).expect("open legacy preferences");
         let preferences = store.preferences();
-        assert!(!preferences.saving_enabled);
+        assert!(preferences.saving_enabled);
         assert!(preferences.connect_on_launch);
         assert_eq!(preferences.min_bytes, DEFAULT_MIN_BYTES);
         assert_eq!(preferences.frontier, DEFAULT_FRONTIER);
