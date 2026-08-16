@@ -31,6 +31,11 @@ The socket:
 - never accepts arbitrary shell commands
 - never carries tool-result bodies, receipts, bearer credentials, account IDs, or the Codex transport capability
 - is treated as stale and replaced on launch only when no live runtime answers it
+- limits request/response payloads to 64 KiB
+- allows at most 16 simultaneous control clients
+- applies a 5-second connect/read/write timeout
+
+Excess clients are dropped instead of creating unbounded runtime tasks.
 
 ## Commands
 
@@ -60,6 +65,8 @@ Reads the live menu-bar runtime through the control channel and reports:
 - active request count
 - redacted health state
 
+The runtime DTO also carries a content-free dropped-telemetry-observation count. That value is primarily interpreted by `doctor`: non-zero means inference continued but savings telemetry may be incomplete because its bounded queue saturated.
+
 When the runtime is not running, the command reports that condition and may show persisted user intent such as token-saving and reconnect-on-launch preferences.
 
 ### `connect` / `disconnect`
@@ -82,6 +89,8 @@ Output distinguishes:
 - approximate tokens saved, always marked with `~`
 - compacted tool-result count
 - aged request count
+
+A request contributes a transport observation only after the upstream request has returned response headers. An upstream connection failure before that point does not inflate savings.
 
 ### `config show`
 
@@ -165,15 +174,38 @@ Guardrails:
 
 Current authored checks cover:
 
-- Codex CLI discovery/version when available
+- Codex CLI discovery/version and release-validation identity
 - TokenSaver data-directory permissions
 - runtime-preference file permissions
 - persistent savings file permissions
 - restoration snapshot privacy and snapshot/config coherence
 - Codex config path/readability
 - menu-bar runtime control-channel reachability
+- bounded telemetry queue drop state
 - first-party ChatGPT Codex host reachability
 - first-party OpenAI API host reachability
+
+### Codex compatibility status
+
+TokenSaver's implementation baseline is pinned to:
+
+```text
+openai/codex@9ded177ce7c1c0bd2047f902936c177612ab3434
+```
+
+The pinned Rust workspace reports version `0.0.0`, so doctor does not invent a semantic-version compatibility range.
+
+Instead:
+
+- an exact `codex --version` identity explicitly release-validated by TokenSaver may PASS
+- an installed but not explicitly validated identity WARNs
+- an unavailable/empty version identity WARNs
+
+The source validation allow-list is intentionally empty until the final executed validation pass proves an exact Codex build. Unknown does not mean incompatible; it means **not yet proven compatible for a TokenSaver release**.
+
+### Telemetry health
+
+If the bounded content-free observation queue drops entries, `doctor` returns a warning containing only the drop count. Inference is not blocked, but session/day/all-time savings may undercount real optimization activity.
 
 A first-party reachability PASS means an HTTP response was obtained; it does not claim that a specific authenticated Codex request succeeded.
 
@@ -197,9 +229,12 @@ CLI and doctor output must never print:
 - original tool-result bodies
 - compact receipt bodies
 - arbitrary Codex configuration contents
+- private expected/actual config values from drift errors
+
+Redaction is also enforced at the `CodexConfigError` outward display layer, not only in CLI presentation.
 
 The CLI receives only application DTOs and must not directly inspect module persistence or transport internals.
 
 ## Validation status
 
-Implementation and test/architecture sources may be authored during development, but project instruction defers execution. No compile, test, lint, format, Tauri run/build, CI, live doctor, or CLI smoke command is considered passed until the final user-requested validation phase.
+Implementation and test/architecture sources may be authored during development, but project instruction defers execution. No compile, test, lint, format, Tauri run/build, CI, live doctor, CLI smoke, saturation, compatibility, or release-verification command is considered passed until the final user-requested validation phase.
