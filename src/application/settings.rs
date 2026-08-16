@@ -100,3 +100,20 @@ fn snapshot(preferences: crate::modules::runtime::RuntimePreferences) -> Setting
         preview_code_units: preferences.preview_code_units,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::modules::aging::AgingPolicy;
+    use crate::modules::runtime::RuntimePreferences;
+
+    #[test]
+    fn persisted_policy_defaults_match_aging_domain_defaults() {
+        let preferences = RuntimePreferences::default();
+        let policy = AgingPolicy::default();
+
+        assert_eq!(preferences.saving_enabled, policy.enabled);
+        assert_eq!(preferences.min_bytes, policy.min_bytes);
+        assert_eq!(preferences.frontier, policy.frontier);
+        assert_eq!(preferences.preview_code_units, policy.preview_code_units);
+    }
+}
