@@ -60,16 +60,4 @@ impl RuntimeStatusStore {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         update(&mut state);
     }
-
-    pub(crate) fn clear_error(&self) {
-        self.update(|state| state.last_error = None);
-    }
-
-    pub(crate) fn set_error(&self, message: impl Into<String>) {
-        let message = message.into();
-        self.update(|state| {
-            state.service = ServiceStatus::Error;
-            state.last_error = Some(message);
-        });
-    }
 }
