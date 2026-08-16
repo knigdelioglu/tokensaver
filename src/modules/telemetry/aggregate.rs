@@ -1,6 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 use super::model::{OptimizationEvent, OptimizationOutcome};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SavingsSummary {
     pub(crate) events: u64,
     pub(crate) aged_requests: u64,
@@ -94,8 +96,7 @@ impl SavingsSummary {
     }
 }
 
-/// In-memory content-free event ledger. Durable storage is intentionally left
-/// behind an explicit telemetry boundary for a later runtime/persistence phase.
+/// In-memory content-free event ledger used for the current process/session.
 #[derive(Debug, Default)]
 pub(crate) struct SavingsLedger {
     events: Vec<OptimizationEvent>,
@@ -119,8 +120,6 @@ impl SavingsLedger {
         )
     }
 
-    /// Summarize a caller-defined wall-clock range. Runtime/UI code can pass the
-    /// exact local-day boundaries without making telemetry own timezone policy.
     pub(crate) fn between(&self, start_epoch_ms: u64, end_epoch_ms: u64) -> SavingsSummary {
         summarize(self.events.iter().copied().filter(|event| {
             event.observed_at_epoch_ms >= start_epoch_ms
