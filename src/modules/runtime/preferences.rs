@@ -5,9 +5,13 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::modules::aging::{
+    DEFAULT_FRONTIER, DEFAULT_MIN_BYTES, DEFAULT_PREVIEW_CODE_UNITS,
+};
 use crate::shared::filesystem::atomic_write_private;
 
-const PREFERENCES_SCHEMA_VERSION: u32 = 1;
+const PREFERENCES_SCHEMA_VERSION: u32 = 2;
+const LEGACY_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct RuntimePreferences {
@@ -18,6 +22,12 @@ pub(crate) struct RuntimePreferences {
     /// later launch/start-at-login can reconnect automatically.
     #[serde(default)]
     pub(crate) connect_on_launch: bool,
+    #[serde(default = "default_min_bytes")]
+    pub(crate) min_bytes: usize,
+    #[serde(default = "default_frontier")]
+    pub(crate) frontier: usize,
+    #[serde(default = "default_preview_code_units")]
+    pub(crate) preview_code_units: usize,
 }
 
 impl Default for RuntimePreferences {
@@ -26,7 +36,16 @@ impl Default for RuntimePreferences {
             schema_version: PREFERENCES_SCHEMA_VERSION,
             saving_enabled: true,
             connect_on_launch: false,
+            min_bytes: DEFAULT_MIN_BYTES,
+            frontier: DEFAULT_FRONTIER,
+            preview_code_units: DEFAULT_PREVIEW_CODE_UNITS,
         }
+    }
+}
+
+impl RuntimePreferences {
+    pub(crate) fn policy_values(self) -> (usize, usize, usize) {
+        (self.min_bytes, self.frontier, self.preview_code_units)
     }
 }
 
@@ -35,6 +54,7 @@ pub(crate) enum RuntimePreferencesError {
     Io(io::Error),
     InvalidJson(String),
     UnsupportedSchema(u32),
+    InvalidValue(&'static str),
 }
 
 impl fmt::Display for RuntimePreferencesError {
@@ -45,6 +65,7 @@ impl fmt::Display for RuntimePreferencesError {
             Self::UnsupportedSchema(version) => {
                 write!(formatter, "unsupported runtime preferences schema version: {version}")
             }
+            Self::InvalidValue(name) => write!(formatter, "invalid runtime preference: {name}"),
         }
     }
 }
@@ -73,20 +94,20 @@ pub(crate) struct RuntimePreferencesStore {
 impl RuntimePreferencesStore {
     pub(crate) fn open(path: impl Into<PathBuf>) -> Result<Self, RuntimePreferencesError> {
         let path = path.into();
-        let preferences = match fs::read_to_string(&path) {
+        let mut preferences = match fs::read_to_string(&path) {
             Ok(source) => {
                 let preferences = serde_json::from_str::<RuntimePreferences>(&source)
                     .map_err(|error| RuntimePreferencesError::InvalidJson(error.to_string()))?;
-                if preferences.schema_version != PREFERENCES_SCHEMA_VERSION {
-                    return Err(RuntimePreferencesError::UnsupportedSchema(
-                        preferences.schema_version,
-                    ));
+                match preferences.schema_version {
+                    PREFERENCES_SCHEMA_VERSION | LEGACY_SCHEMA_VERSION => preferences,
+                    version => return Err(RuntimePreferencesError::UnsupportedSchema(version)),
                 }
-                preferences
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => RuntimePreferences::default(),
             Err(error) => return Err(RuntimePreferencesError::Io(error)),
         };
+        validate(&preferences)?;
+        preferences.schema_version = PREFERENCES_SCHEMA_VERSION;
         Ok(Self { path, preferences })
     }
 
@@ -110,10 +131,73 @@ impl RuntimePreferencesStore {
         self.save()
     }
 
+    pub(crate) fn set_min_bytes(
+        &mut self,
+        min_bytes: usize,
+    ) -> Result<(), RuntimePreferencesError> {
+        if min_bytes == 0 {
+            return Err(RuntimePreferencesError::InvalidValue("min_bytes must be greater than zero"));
+        }
+        self.preferences.min_bytes = min_bytes;
+        self.save()
+    }
+
+    pub(crate) fn set_frontier(
+        &mut self,
+        frontier: usize,
+    ) -> Result<(), RuntimePreferencesError> {
+        if frontier > 256 {
+            return Err(RuntimePreferencesError::InvalidValue("frontier must be <= 256"));
+        }
+        self.preferences.frontier = frontier;
+        self.save()
+    }
+
+    pub(crate) fn set_preview_code_units(
+        &mut self,
+        preview_code_units: usize,
+    ) -> Result<(), RuntimePreferencesError> {
+        if !(64..=16_384).contains(&preview_code_units) {
+            return Err(RuntimePreferencesError::InvalidValue(
+                "preview_code_units must be between 64 and 16384",
+            ));
+        }
+        self.preferences.preview_code_units = preview_code_units;
+        self.save()
+    }
+
     fn save(&self) -> Result<(), RuntimePreferencesError> {
+        validate(&self.preferences)?;
         let serialized = serde_json::to_string_pretty(&self.preferences)
             .map_err(|error| RuntimePreferencesError::InvalidJson(error.to_string()))?;
         atomic_write_private(&self.path, &serialized)?;
         Ok(())
     }
+}
+
+fn validate(preferences: &RuntimePreferences) -> Result<(), RuntimePreferencesError> {
+    if preferences.min_bytes == 0 {
+        return Err(RuntimePreferencesError::InvalidValue("min_bytes must be greater than zero"));
+    }
+    if preferences.frontier > 256 {
+        return Err(RuntimePreferencesError::InvalidValue("frontier must be <= 256"));
+    }
+    if !(64..=16_384).contains(&preferences.preview_code_units) {
+        return Err(RuntimePreferencesError::InvalidValue(
+            "preview_code_units must be between 64 and 16384",
+        ));
+    }
+    Ok(())
+}
+
+const fn default_min_bytes() -> usize {
+    DEFAULT_MIN_BYTES
+}
+
+const fn default_frontier() -> usize {
+    DEFAULT_FRONTIER
+}
+
+const fn default_preview_code_units() -> usize {
+    DEFAULT_PREVIEW_CODE_UNITS
 }
