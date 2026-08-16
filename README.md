@@ -19,25 +19,25 @@ After the model has already consumed one of these results, the same large payloa
 
 TokenSaver targets that repetition.
 
-## Target flow
+## Runtime flow
 
 ```text
 Codex
   ↓
-TokenSaver local transport
+TokenSaver local loopback
   ↓
-inspect request history
+inspect ordinary Responses history
   ↓
 age only eligible historical tool results
   ↓
-forward to the same native Codex/OpenAI upstream
+forward to the same first-party Codex/OpenAI upstream
   ↓
-relay the response stream unchanged
+relay response stream unchanged
   ↓
 Codex
 ```
 
-The user continues to use normal Codex. TokenSaver should otherwise stay out of the way.
+The user continues to use normal Codex. TokenSaver stays out of the model/tool workflow and exposes only a small macOS menu-bar control surface.
 
 ## Core idea: tool-result aging
 
@@ -48,17 +48,17 @@ A candidate is compacted only when all required safety conditions are satisfied:
 - only textual tool results are eligible
 - the model must already have acted after seeing the result
 - small results stay untouched
-- a configurable number of the newest tool results stay byte-for-byte intact
+- a configurable number of newest tool results stay byte-for-byte intact
 - mixed/image-bearing results stay untouched
 - unknown/ambiguous structures stay untouched
 - compaction must never make a result larger
 
-The initial reference policy is:
+Initial policy:
 
 - minimum result size: **32 KiB**
 - protected newest-result frontier: **4 results**
-- head preview: approximately **1024 code units**
-- tail preview: approximately **1024 code units**
+- head preview: approximately **1024 UTF-16 code units**
+- tail preview: approximately **1024 UTF-16 code units**
 - receipt identity: original UTF-8 byte length + **SHA-256** digest
 
 Conceptually:
@@ -77,18 +77,20 @@ deterministic compact receipt
   - original size
   - SHA-256
   - bounded head preview
-  - omitted-middle marker
+  - explicit omitted middle
   - bounded tail preview
         │
         ▼
 smaller context on later requests
 ```
 
+Receipt v1 also carries machine-readable size/digest/preview-length metadata so an externally recovered exact source can be verified. TokenSaver does **not** keep a persistent vault of complete original tool outputs in MVP.
+
 ## Product boundary
 
 TokenSaver is **not** a model router and will not become a general Codex replacement.
 
-It does not aim to provide:
+It does not provide:
 
 - model/provider routing
 - API-key or subscription management
@@ -101,7 +103,7 @@ It does not aim to provide:
 - unrelated response rewriting
 - generic conversation summarization by another LLM
 
-A minimal tray/menu-bar application **is** part of the product because it answers whether TokenSaver is connected and whether it is actually saving context. The tray is restricted to TokenSaver operation/observability; it is not a model/provider management surface.
+The macOS tray/menu-bar application is part of the product because it answers whether TokenSaver is connected and whether it is actually saving context. It is restricted to TokenSaver operation/observability.
 
 See [SCOPE.md](./SCOPE.md) for the authoritative product boundary.
 
@@ -109,11 +111,19 @@ See [SCOPE.md](./SCOPE.md) for the authoritative product boundary.
 
 TokenSaver is implemented as a **modular monolith**.
 
-Current core layout:
+Current layout:
 
 ```text
 src/
 ├── application/
+│   ├── codex_connection.rs
+│   ├── desktop_runtime.rs
+│   ├── measurement.rs
+│   ├── benchmark.rs
+│   ├── recovery.rs
+│   └── quality.rs
+├── desktop/
+│   └── mod.rs
 ├── modules/
 │   ├── aging/
 │   ├── transport/
@@ -128,26 +138,70 @@ The strongest dependency rule is:
 
 > **The aging domain must remain transport-, Codex-, persistence-, and UI-agnostic.**
 
-Cross-module use cases are coordinated through the application layer. Internal modules are not exposed as an accidental public library API.
+The Tauri shell also does not reach into modules directly; it calls the application-layer desktop runtime controller.
 
 See [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) for module ownership and dependency rules.
 
-## Native Codex integration contract
+## Native Codex integration
 
-TokenSaver's future Codex transport must preserve native Codex behavior while inserting aging at one narrow point in the request path.
+TokenSaver temporarily points the built-in Codex/OpenAI provider at a capability-protected loopback base URL, while preserving native account/model behavior and fixed first-party upstreams.
 
-Key requirements include:
+Important rules:
 
-- keep Codex's existing account/model experience
-- change only the minimum TokenSaver-owned Codex configuration
-- snapshot and restore those changes exactly
-- use Codex's existing native authentication path rather than requiring a separate OpenAI API key
-- support the transport details required by the supported Codex build
-- bypass explicit conversation compaction so its summarizer can read original history
-- relay responses without semantic transformation
-- provide a hard OFF mode with no aging rewrite
+- use Codex's existing authentication path; no separate TokenSaver OpenAI key
+- snapshot TokenSaver-owned Codex config before mutation
+- restore/remove only values TokenSaver owns
+- detect drift rather than overwriting newer user changes
+- bypass explicit conversation compaction so it sees original history
+- pass verified native models/search/images/memory endpoints without aging
+- keep realtime/WebRTC off the Responses optimizer path
+- return WebSocket `426` so supported Codex builds fall back to HTTP Responses
+- relay upstream response streams without semantic rewrite
+- provide hard OFF mode with no aging rewrite
 
-The detailed contract is frozen in [docs/CODEX_TRANSPORT_CONTRACT.md](./docs/CODEX_TRANSPORT_CONTRACT.md).
+The detailed contract is in [docs/CODEX_TRANSPORT_CONTRACT.md](./docs/CODEX_TRANSPORT_CONTRACT.md).
+
+## macOS menu-bar runtime
+
+Phase 5 provides a windowless Tauri 2 menu-bar application.
+
+The tray exposes backend-derived state such as:
+
+```text
+TokenSaver
+────────────────────────────────────────────
+Status: Active
+Codex: Connected
+Request: Idle
+Health: OK
+
+This session: 720 KB saved · ~184K tokens · 12 results / 7 requests
+Today: 2.8 MB saved · ~742K tokens · 41 results / 24 requests
+All time: 10.1 MB saved · ~2.6M tokens · 143 results / 82 requests
+Last optimization 16:12: 84 KB → 3 KB · 81 KB saved · ~20K tokens
+
+✓ Token Saving Enabled
+  Disconnect from Codex
+✓ Start at Login
+
+Quit TokenSaver
+```
+
+Key lifecycle behavior:
+
+- first launch is disconnected unless prior connection intent/crash state says to reconnect
+- Connect/Disconnect uses the reversible Phase 3 config transaction
+- saving ON/OFF persists and updates live transport policy
+- Start at Login uses the macOS autostart integration
+- only one desktop instance is allowed
+- request activity is counted through the complete streamed response lifetime
+- Disconnect/Quit is refused while a Codex request is active
+- normal Quit restores Codex config before process exit
+- safe Quit preserves the user's desire to reconnect on a later launch
+
+Only numeric content-free savings aggregates are persisted for tray statistics.
+
+See [docs/DESKTOP_RUNTIME.md](./docs/DESKTOP_RUNTIME.md) for the lifecycle and tray contract.
 
 ## Design principles
 
@@ -161,7 +215,7 @@ A result must not be shortened before the model has acted after receiving it.
 
 ### Deterministic output
 
-The same source result and policy should produce the same compact receipt. This keeps behavior auditable and reduces unnecessary prompt-prefix churn.
+The same source result and policy should produce the same compact receipt.
 
 ### Fail original
 
@@ -171,6 +225,10 @@ If TokenSaver cannot confidently classify or transform an item, the original con
 
 If the receipt is not smaller than the source result, keep the source result.
 
+### Make missing evidence explicit
+
+Receipt head/tail content is verbatim evidence; omitted middle bytes are unavailable and must not be inferred.
+
 ### Measure truthfully
 
 TokenSaver distinguishes:
@@ -179,11 +237,11 @@ TokenSaver distinguishes:
 - estimated tokens saved
 - provider-reported token/cache telemetry when naturally available
 
-Estimated values must remain labeled as estimates.
+Estimated values are labeled as estimates.
 
-### No hidden semantic summarization
+### Safe lifecycle over convenience
 
-The initial mechanism uses deterministic structural compaction rather than another LLM to summarize tool output.
+TokenSaver refuses destructive config restoration or process exit when it cannot prove that doing so is safe.
 
 ## Required invariants
 
@@ -200,47 +258,27 @@ The project contract requires, among other rules:
 9. Hard OFF mode performs no context rewriting.
 10. Routine telemetry does not contain original large result bodies.
 11. Modular-monolith boundaries are enforced.
+12. Explicit conversation compaction receives original history.
+13. Exact omitted content is never fabricated.
+14. Normal desktop shutdown does not intentionally strand Codex on a dead local endpoint.
 
 The complete invariant set lives in [SCOPE.md](./SCOPE.md).
 
-## User-facing target
-
-The macOS product will eventually expose a small menu-bar surface such as:
-
-```text
-TokenSaver
-──────────────
-Status            Active
-Codex             Connected
-Token Saving      On
-
-This session
-Saved             ~184K tokens
-Compacted         12 results
-
-Last optimization
-84 KB → 3 KB
-```
-
-Counters must be backed by runtime telemetry rather than UI toggle state.
-
 ## Phase status
 
-### Phase 0 — Project contract and architecture: complete
+- **Phase 0 — Project contract and architecture:** complete
+- **Phase 1 — Deterministic aging engine:** implemented, validation deferred
+- **Phase 2 — Measurement/benchmark:** implemented, validation deferred
+- **Phase 3 — Native Codex transport:** implemented, validation deferred
+- **Phase 4 — Recovery/quality guardrails:** implemented, validation deferred
+- **Phase 5 — macOS runtime/tray:** implemented, validation deferred
+- **Phase 6 — CLI/doctor:** not started
+- **Phase 7 — Packaging/update/uninstall:** not started
+- **Phase 8 — Hardening/release gates:** not started
 
-Phase 0 establishes:
+Per project instruction, implementation phases have been authored **without running tests, builds, linters, formatters, CI, benchmarks, or live Codex validation**. Final execution is intentionally deferred.
 
-- product scope and non-goals
-- modular-monolith code skeleton
-- module ownership/dependency rules
-- architecture-contract tests for critical forbidden dependencies
-- native Codex transport contract
-- pinned Codex Router aging reference
-- engineering guardrails for future implementation
-
-No token-result transformation is claimed yet. The actual deterministic aging engine begins in **Phase 1**.
-
-See [ROADMAP.md](./ROADMAP.md) for the complete implementation sequence.
+See [ROADMAP.md](./ROADMAP.md) for the complete implementation sequence and release gates.
 
 ## Engineering documents
 
@@ -248,6 +286,8 @@ See [ROADMAP.md](./ROADMAP.md) for the complete implementation sequence.
 - [ROADMAP.md](./ROADMAP.md) — phased implementation plan and release gates
 - [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — modular-monolith boundaries
 - [docs/CODEX_TRANSPORT_CONTRACT.md](./docs/CODEX_TRANSPORT_CONTRACT.md) — native Codex integration contract
+- [docs/RECOVERY.md](./docs/RECOVERY.md) — receipt/recovery evidence rules
+- [docs/DESKTOP_RUNTIME.md](./docs/DESKTOP_RUNTIME.md) — macOS runtime/tray lifecycle contract
 - [docs/UPSTREAM_REFERENCE.md](./docs/UPSTREAM_REFERENCE.md) — pinned Codex Router behavior adopted/rejected
 - [AGENTS.md](./AGENTS.md) — repository implementation guardrails
 
