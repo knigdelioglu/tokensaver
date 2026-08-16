@@ -140,7 +140,7 @@ TokenSaver may include deterministic fixtures for aging behavior, byte savings, 
 
 ### 9. Safety and regression testing
 
-Tests for preservation, eligibility, Unicode safety, hashing, pass-through behavior, protocol structure, recovery evidence, configuration restoration, lifecycle, CLI/control security, diagnostics redaction, and module-boundary enforcement are part of the product.
+Tests for preservation, eligibility, Unicode safety, hashing, pass-through behavior, protocol structure, recovery evidence, configuration restoration, lifecycle, CLI/control security, diagnostics redaction, packaging/uninstall ownership, and module-boundary enforcement are part of the product.
 
 ### 10. Minimal macOS tray/menu-bar control surface
 
@@ -155,6 +155,7 @@ The supported desktop build may provide a small TokenSaver-specific surface for:
 - Connect / Disconnect
 - Start at Login
 - safe Quit
+- safe uninstall preparation
 
 The tray is not a model/provider management surface.
 
@@ -178,12 +179,28 @@ TokenSaver may expose a narrow terminal surface for its own operation and health
 - content-free savings statistics
 - optimization-policy show/set
 - doctor/health checks
+- explicit uninstall-state cleanup
 
 Live mutation commands may use an owner-local finite control protocol to reach the single running menu-bar runtime. This protocol must never become arbitrary command execution or a second general local API/proxy.
 
 Offline CLI reads/writes may touch only TokenSaver-owned application state through application services.
 
 Doctor may inspect/redact only information necessary to assess TokenSaver/Codex integration health, local state permissions, restoration coherence, runtime reachability, and fixed first-party host reachability.
+
+### 13. Packaging, update, and uninstall safety
+
+TokenSaver may provide the minimum macOS packaging/release lifecycle needed to install, replace, and remove the local optimizer safely.
+
+In scope:
+
+- `.app` / `.dmg` bundle configuration
+- source-controlled icon source + generated release icons
+- release-environment signing/notarization integration
+- manual application replacement that preserves external owner-local state
+- safe uninstall preparation that restores Codex and disables Start at Login
+- optional cleanup limited to proven TokenSaver-owned state
+
+A self-updater is not part of the current MVP unless trusted endpoints, signed artifacts, updater keys, downgrade/version policy, and recovery validation exist first.
 
 ## Required invariants
 
@@ -264,6 +281,10 @@ The live CLI control channel must use an explicit finite protocol, bounded messa
 ### INV-19 — Diagnostics are redacted and evidence-bounded
 
 Doctor/status output must not expose provider credentials, account IDs, capability URLs, original tool-result bodies, receipt bodies, or arbitrary Codex config contents. A reachability probe must not be presented as proof of authenticated inference success.
+
+### INV-20 — Uninstall never destroys restoration proof or unknown state
+
+Generic uninstall cleanup must refuse to proceed while an active Codex restoration snapshot exists. It must delete only explicitly owned TokenSaver state, remain non-recursive, preserve unknown files/directories, and never edit Codex configuration as part of generic state purge.
 
 ## Out of scope
 
@@ -357,6 +378,10 @@ TokenSaver does not become a general coding-tool host. Any future exact-result r
 
 The owner-local CLI control socket is not a plugin API, webhook receiver, remote-control server, shell bridge, or general automation bus.
 
+### Unsigned self-updater in MVP
+
+TokenSaver does not ship an automatic updater that cannot cryptographically verify trusted release artifacts. Manual application replacement remains preferable to an unauthenticated update channel.
+
 ## MVP definition
 
 The MVP is complete when TokenSaver can:
@@ -376,9 +401,10 @@ The MVP is complete when TokenSaver can:
 13. Safely detach on normal Quit without cutting active request streams.
 14. Provide a minimal CLI that controls the single runtime without starting a competing proxy.
 15. Provide redacted diagnostics without exposing capability/auth/result content.
-16. Pass automated and live validation for all required invariants.
+16. Produce the macOS package/update/uninstall lifecycle without deleting restoration proof or unknown state.
+17. Pass automated and live validation for all required invariants.
 
-The MVP does **not** require a provider catalog, model selector, external-model routing, multi-agent orchestration, account-management system, full dashboard, or general local-control API.
+The MVP does **not** require a provider catalog, model selector, external-model routing, multi-agent orchestration, account-management system, full dashboard, general local-control API, or self-updater.
 
 ## Scope-change rule
 
@@ -386,7 +412,7 @@ Before adding a substantial feature, evaluate it against:
 
 1. Does it directly reduce repeated context/token usage, improve correctness/recovery/measurement, or safely operate that mechanism?
 2. Can it be implemented without turning TokenSaver into a general router, agent platform, or automation bus?
-3. Does it preserve fail-original/pass-through/recovery truthfulness and secret redaction?
+3. Does it preserve fail-original/pass-through/recovery truthfulness, lifecycle restoration, and secret redaction?
 4. Does it preserve modular-monolith boundaries, or is an explicit architecture decision required?
 
 If any answer is no, reject the feature or move it to a separate project.
