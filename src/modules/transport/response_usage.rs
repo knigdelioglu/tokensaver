@@ -192,10 +192,16 @@ mod tests {
 
     #[test]
     fn non_streaming_openai_usage_is_observed() {
+        let payload = serde_json::json!({
+            "usage": {
+                "input_tokens": 1200,
+                "input_tokens_details": { "cached_tokens": 900 },
+                "output_tokens": 77
+            }
+        });
+        let encoded = serde_json::to_vec(&payload).expect("encode usage fixture");
         let mut collector = ResponseUsageCollector::new(false);
-        collector.observe(
-            br#"{"usage":{"input_tokens":1200,"input_tokens_details":{"cached_tokens":900},"output_tokens":77}}"#,
-        );
+        collector.observe(&encoded);
         assert_eq!(
             collector.finish(),
             Some(ProviderUsageObservation {
