@@ -60,10 +60,10 @@ pub(crate) struct ControlResponse {
 }
 
 impl ControlResponse {
-    fn success(snapshot: ControlSnapshot, message: impl Into<Option<String>>) -> Self {
+    fn success(snapshot: ControlSnapshot, message: Option<String>) -> Self {
         Self {
             ok: true,
-            message: message.into(),
+            message,
             snapshot: Some(snapshot),
         }
     }
@@ -88,8 +88,12 @@ pub(crate) enum ControlError {
 impl fmt::Display for ControlError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnsupportedPlatform => write!(formatter, "TokenSaver control socket is currently macOS/Unix only"),
-            Self::RuntimeAlreadyActive => write!(formatter, "a TokenSaver control runtime is already active"),
+            Self::UnsupportedPlatform => {
+                write!(formatter, "TokenSaver control socket is currently macOS/Unix only")
+            }
+            Self::RuntimeAlreadyActive => {
+                write!(formatter, "a TokenSaver control runtime is already active")
+            }
             Self::Io(error) => write!(formatter, "control channel I/O failed: {error}"),
             Self::Protocol(error) => write!(formatter, "control protocol failed: {error}"),
         }
@@ -119,7 +123,7 @@ pub(crate) async fn serve_control_socket(
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
 
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::{UnixListener, UnixStream};
 
     let parent = socket_path.parent().ok_or_else(|| {
@@ -159,7 +163,9 @@ pub(crate) async fn serve_control_socket(
                         None,
                     ),
                 },
-                Err(error) => ControlResponse::failure(format!("control read failed: {error}"), None),
+                Err(error) => {
+                    ControlResponse::failure(format!("control read failed: {error}"), None)
+                }
             };
 
             if let Ok(mut encoded) = serde_json::to_vec(&response) {
@@ -184,7 +190,7 @@ pub(crate) async fn send_control_request(
     socket_path: &Path,
     request: &ControlRequest,
 ) -> Result<ControlResponse, ControlError> {
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixStream;
 
     let stream = UnixStream::connect(socket_path).await?;
@@ -202,7 +208,9 @@ pub(crate) async fn send_control_request(
         return Err(ControlError::Protocol("runtime returned no response".to_owned()));
     }
     if line.len() > MAX_CONTROL_MESSAGE_BYTES {
-        return Err(ControlError::Protocol("runtime response exceeds size limit".to_owned()));
+        return Err(ControlError::Protocol(
+            "runtime response exceeds size limit".to_owned(),
+        ));
     }
     serde_json::from_str(line.trim_end())
         .map_err(|error| ControlError::Protocol(error.to_string()))
@@ -222,15 +230,20 @@ async fn handle_request(
 ) -> ControlResponse {
     let result = match request {
         ControlRequest::Status | ControlRequest::Stats | ControlRequest::ConfigShow => Ok(None),
-        ControlRequest::Connect => controller.connect().await.map(|_| Some("Codex connected".to_owned())),
+        ControlRequest::Connect => controller
+            .connect()
+            .await
+            .map(|_| Some("Codex connected".to_owned())),
         ControlRequest::Disconnect => controller
             .disconnect()
             .await
             .map(|_| Some("Codex disconnected".to_owned())),
-        ControlRequest::Saving { enabled } => controller
-            .set_saving_enabled(enabled)
-            .await
-            .map(|_| Some(format!("token saving {}", if enabled { "enabled" } else { "disabled" }))),
+        ControlRequest::Saving { enabled } => controller.set_saving_enabled(enabled).await.map(|_| {
+            Some(format!(
+                "token saving {}",
+                if enabled { "enabled" } else { "disabled" }
+            ))
+        }),
         ControlRequest::ConfigSet { key, value } => match key.as_str() {
             "min-bytes" => controller
                 .set_min_bytes(value)
@@ -253,7 +266,9 @@ async fn handle_request(
     };
 
     match result {
-        Ok(message) => ControlResponse::success(snapshot_to_control(controller.snapshot().await), message),
+        Ok(message) => {
+            ControlResponse::success(snapshot_to_control(controller.snapshot().await), message)
+        }
         Err(error) => ControlResponse::failure(
             error.to_string(),
             Some(snapshot_to_control(controller.snapshot().await)),
