@@ -28,7 +28,11 @@ struct TrayUi {
     status: MenuItem<Wry>,
     codex: MenuItem<Wry>,
     request: MenuItem<Wry>,
+    traffic: MenuItem<Wry>,
     health: MenuItem<Wry>,
+    optimizer: MenuItem<Wry>,
+    routing: MenuItem<Wry>,
+    tool_results: MenuItem<Wry>,
     session: MenuItem<Wry>,
     today: MenuItem<Wry>,
     all_time: MenuItem<Wry>,
@@ -43,27 +47,61 @@ struct TrayUi {
 impl TrayUi {
     fn build(app: &tauri::App<Wry>) -> tauri::Result<Self> {
         let status = MenuItem::with_id(app, "status", "Status: Starting", false, None::<&str>)?;
-        let codex = MenuItem::with_id(app, "codex", "Codex: Checking", false, None::<&str>)?;
+        let codex = MenuItem::with_id(
+            app,
+            "codex",
+            "Codex config: Checking",
+            false,
+            None::<&str>,
+        )?;
         let request = MenuItem::with_id(app, "request", "Request: Idle", false, None::<&str>)?;
+        let traffic = MenuItem::with_id(
+            app,
+            "traffic",
+            "Traffic: Not seen this session",
+            false,
+            None::<&str>,
+        )?;
         let health = MenuItem::with_id(app, "health", "Health: OK", false, None::<&str>)?;
+        let optimizer = MenuItem::with_id(
+            app,
+            "optimizer-diagnostics",
+            "Responses: 0 · aged 0 · no eligible 0 · no savings 0",
+            false,
+            None::<&str>,
+        )?;
+        let routing = MenuItem::with_id(
+            app,
+            "routing-diagnostics",
+            "Other traffic: 0 passthrough · 0 compaction bypass · 0 fail-original · 0 saving-off",
+            false,
+            None::<&str>,
+        )?;
+        let tool_results = MenuItem::with_id(
+            app,
+            "tool-result-diagnostics",
+            "Tool results: 0 evaluated · 0 eligible · 0 compacted",
+            false,
+            None::<&str>,
+        )?;
         let session = MenuItem::with_id(
             app,
             "session-savings",
-            "This session: 0 B saved · 0 est. tokens · 0 results",
+            "This session: 0 B saved · 0 est. tokens · 0 compacted / 0 observed",
             false,
             None::<&str>,
         )?;
         let today = MenuItem::with_id(
             app,
             "today-savings",
-            "Today: 0 B saved · 0 est. tokens · 0 results",
+            "Today: 0 B saved · 0 est. tokens · 0 compacted / 0 observed",
             false,
             None::<&str>,
         )?;
         let all_time = MenuItem::with_id(
             app,
             "all-time-savings",
-            "All time: 0 B saved · 0 est. tokens · 0 results",
+            "All time: 0 B saved · 0 est. tokens · 0 compacted / 0 observed",
             false,
             None::<&str>,
         )?;
@@ -104,7 +142,12 @@ impl TrayUi {
             .item(&status)
             .item(&codex)
             .item(&request)
+            .item(&traffic)
             .item(&health)
+            .separator()
+            .item(&optimizer)
+            .item(&routing)
+            .item(&tool_results)
             .separator()
             .item(&session)
             .item(&today)
@@ -132,7 +175,11 @@ impl TrayUi {
             status,
             codex,
             request,
+            traffic,
             health,
+            optimizer,
+            routing,
+            tool_results,
             session,
             today,
             all_time,
@@ -153,20 +200,33 @@ impl TrayUi {
     ) -> tauri::Result<()> {
         self.status
             .set_text(format!("Status: {}", service_text(snapshot.service)))?;
-        self.codex
-            .set_text(format!("Codex: {}", codex_text(snapshot.codex)))?;
+        self.codex.set_text(format!(
+            "Codex config: {}",
+            codex_text(snapshot.codex)
+        ))?;
         self.request.set_text(if snapshot.active_requests == 0 {
             "Request: Idle".to_owned()
         } else {
             format!("Request: Active ({})", snapshot.active_requests)
         })?;
+        self.traffic.set_text(format_traffic(snapshot.session))?;
 
         let health_error = snapshot.last_error.as_deref().or(shell_error);
         self.health.set_text(match health_error {
             Some(error) => format!("Health: {}", truncate_single_line(error, 92)),
+            None if snapshot.dropped_telemetry_observations > 0 => format!(
+                "Health: Telemetry incomplete — {} observations dropped",
+                snapshot.dropped_telemetry_observations
+            ),
             None => "Health: OK".to_owned(),
         })?;
 
+        self.optimizer
+            .set_text(format_optimizer_diagnostics(snapshot.session))?;
+        self.routing
+            .set_text(format_routing_diagnostics(snapshot.session))?;
+        self.tool_results
+            .set_text(format_tool_result_diagnostics(snapshot.session))?;
         self.session
             .set_text(format_savings("This session", snapshot.session))?;
         self.today
@@ -215,8 +275,9 @@ impl TrayUi {
         };
         self.tray.set_title(Some(title))?;
         self.tray.set_tooltip(Some(format!(
-            "TokenSaver — {} — {} saved today ({} measured)",
+            "TokenSaver — config {} — {} requests observed this session — {} saved today ({} measured)",
             codex_text(snapshot.codex),
+            snapshot.session.requests_observed,
             format_estimated_tokens(snapshot.today.estimated_tokens_saved),
             format_bytes(snapshot.today.bytes_saved)
         )))?;
@@ -516,13 +577,53 @@ fn codex_text(state: DesktopCodexState) -> &'static str {
     }
 }
 
+fn format_traffic(savings: SavingsView) -> String {
+    if savings.requests_observed == 0 {
+        "Traffic: Not seen this session".to_owned()
+    } else {
+        format!(
+            "Traffic: Seen · {} requests this session",
+            savings.requests_observed
+        )
+    }
+}
+
+fn format_optimizer_diagnostics(savings: SavingsView) -> String {
+    format!(
+        "Responses: {} · aged {} · no eligible {} · no savings {}",
+        savings.responses_requests,
+        savings.aged_requests,
+        savings.no_eligible_requests,
+        savings.no_savings_requests
+    )
+}
+
+fn format_routing_diagnostics(savings: SavingsView) -> String {
+    format!(
+        "Other traffic: {} passthrough · {} compaction bypass · {} fail-original · {} saving-off",
+        savings.native_passthrough_requests,
+        savings.compaction_bypass_requests,
+        savings.fail_original_requests,
+        savings.disabled_requests
+    )
+}
+
+fn format_tool_result_diagnostics(savings: SavingsView) -> String {
+    format!(
+        "Tool results: {} evaluated · {} eligible · {} compacted",
+        savings.tool_results_evaluated,
+        savings.tool_results_eligible,
+        savings.tool_results_compacted
+    )
+}
+
 fn format_savings(label: &str, savings: SavingsView) -> String {
     format!(
-        "{label}: {} saved · {} · {} results / {} requests",
+        "{label}: {} saved · {} · {} compacted / {} observed",
         format_bytes(savings.bytes_saved),
         format_estimated_tokens(savings.estimated_tokens_saved),
         savings.tool_results_compacted,
-        savings.aged_requests
+        savings.requests_observed
     )
 }
 
@@ -602,4 +703,48 @@ fn truncate_single_line(value: &str, max_chars: usize) -> String {
         .collect::<String>();
     output.push('…');
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        SavingsView, format_optimizer_diagnostics, format_savings, format_tool_result_diagnostics,
+        format_traffic,
+    };
+
+    fn observed_without_savings() -> SavingsView {
+        SavingsView {
+            requests_observed: 12,
+            responses_requests: 10,
+            compaction_bypass_requests: 0,
+            native_passthrough_requests: 2,
+            disabled_requests: 0,
+            fail_original_requests: 0,
+            no_eligible_requests: 10,
+            no_savings_requests: 0,
+            tool_results_evaluated: 42,
+            tool_results_eligible: 0,
+            bytes_saved: 0,
+            estimated_tokens_saved: 0,
+            tool_results_compacted: 0,
+            aged_requests: 0,
+        }
+    }
+
+    #[test]
+    fn traffic_diagnostics_distinguish_zero_savings_from_zero_traffic() {
+        let savings = observed_without_savings();
+        assert_eq!(format_traffic(savings), "Traffic: Seen · 12 requests this session");
+        assert!(format_savings("This session", savings).contains("0 compacted / 12 observed"));
+        assert!(format_optimizer_diagnostics(savings).contains("Responses: 10 · aged 0"));
+        assert!(format_tool_result_diagnostics(savings).contains("42 evaluated · 0 eligible"));
+    }
+
+    #[test]
+    fn zero_observed_requests_remain_explicitly_unproven() {
+        assert_eq!(
+            format_traffic(SavingsView::default()),
+            "Traffic: Not seen this session"
+        );
+    }
 }
