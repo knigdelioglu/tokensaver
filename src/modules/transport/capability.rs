@@ -2,6 +2,7 @@ use rand::rngs::OsRng;
 use rand::RngCore;
 
 const CAPABILITY_BYTES: usize = 32;
+const CAPABILITY_HEX_LENGTH: usize = CAPABILITY_BYTES * 2;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CallerCapability(String);
@@ -15,6 +16,25 @@ impl CallerCapability {
 
     pub(crate) fn loopback_base_url(&self, port: u16) -> String {
         format!("http://127.0.0.1:{port}/{}", self.0)
+    }
+
+    /// Recover the port and capability from a TokenSaver-owned base URL. This is
+    /// used after a restart so a durable Codex config snapshot can reconnect to
+    /// exactly the endpoint it already owns instead of silently rotating it.
+    pub(crate) fn from_loopback_base_url(url: &str) -> Option<(u16, Self)> {
+        let rest = url.strip_prefix("http://127.0.0.1:")?;
+        let (port, secret) = rest.split_once('/')?;
+        if secret.len() != CAPABILITY_HEX_LENGTH
+            || !secret.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || secret.contains('/')
+        {
+            return None;
+        }
+        let port = port.parse::<u16>().ok()?;
+        if port == 0 {
+            return None;
+        }
+        Some((port, Self(secret.to_ascii_lowercase())))
     }
 
     /// Strip the secret prefix and return the upstream-style request path.
