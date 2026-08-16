@@ -17,16 +17,30 @@ const PREFERENCES_FILE: &str = "runtime-preferences.json";
 const CHATGPT_PROBE: &str = "https://chatgpt.com/backend-api/codex/models";
 const OPENAI_PROBE: &str = "https://api.openai.com/v1/models";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DoctorSeverity {
+    Pass,
+    Warning,
+    Failure,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DoctorCheck {
+    pub(crate) name: &'static str,
+    pub(crate) severity: DoctorSeverity,
+    pub(crate) detail: String,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct DoctorReport {
-    pub(crate) checks: Vec<DiagnosticCheck>,
+    pub(crate) checks: Vec<DoctorCheck>,
 }
 
 impl DoctorReport {
     pub(crate) fn has_failures(&self) -> bool {
         self.checks
             .iter()
-            .any(|check| check.severity == DiagnosticSeverity::Failure)
+            .any(|check| check.severity == DoctorSeverity::Failure)
     }
 }
 
@@ -74,7 +88,9 @@ pub(crate) async fn run_doctor() -> DoctorReport {
     );
     checks.push(first_party_reachability_check("openai-upstream", OPENAI_PROBE).await);
 
-    DoctorReport { checks }
+    DoctorReport {
+        checks: checks.into_iter().map(map_check).collect(),
+    }
 }
 
 fn snapshot_check(data_dir: &PathBuf) -> DiagnosticCheck {
@@ -91,15 +107,12 @@ fn snapshot_check(data_dir: &PathBuf) -> DiagnosticCheck {
         return private;
     }
 
-    let snapshot = match load_config_snapshot(&snapshot_path) {
-        Ok(snapshot) => snapshot,
-        Err(error) => {
-            return DiagnosticCheck::failure(
-                "codex-restoration-snapshot",
-                format!("snapshot cannot be validated: {error}"),
-            );
-        }
-    };
+    if let Err(error) = load_config_snapshot(&snapshot_path) {
+        return DiagnosticCheck::failure(
+            "codex-restoration-snapshot",
+            format!("snapshot cannot be validated: {error}"),
+        );
+    }
     let config_path = match codex_config_path() {
         Ok(path) => path,
         Err(error) => {
@@ -164,5 +177,17 @@ async fn runtime_control_check() -> DiagnosticCheck {
             "runtime-control",
             "menu-bar runtime is not reachable; start TokenSaver for connect/saving commands",
         ),
+    }
+}
+
+fn map_check(check: DiagnosticCheck) -> DoctorCheck {
+    DoctorCheck {
+        name: check.name,
+        severity: match check.severity {
+            DiagnosticSeverity::Pass => DoctorSeverity::Pass,
+            DiagnosticSeverity::Warning => DoctorSeverity::Warning,
+            DiagnosticSeverity::Failure => DoctorSeverity::Failure,
+        },
+        detail: check.detail,
     }
 }
