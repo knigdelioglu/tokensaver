@@ -98,13 +98,20 @@ fn try_prepare(
         let Some(item) = items.get_mut(replacement.item_index) else {
             return Err(());
         };
-        if !replacement_still_matches(item, replacement.source_kind, replacement.source_call_id.as_deref()) {
+        if !replacement_still_matches(
+            item,
+            replacement.source_kind,
+            replacement.source_call_id.as_deref(),
+        ) {
             return Err(());
         }
         let Some(object) = item.as_object_mut() else {
             return Err(());
         };
-        object.insert("output".to_owned(), Value::String(replacement.receipt.clone()));
+        object.insert(
+            "output".to_owned(),
+            Value::String(replacement.receipt.clone()),
+        );
     }
 
     let rewritten = serde_json::to_vec(&root).map_err(|_| ())?;
@@ -161,7 +168,7 @@ fn normalize_output(output: Option<&Value>) -> ToolOutput {
                     return ToolOutput::Unsupported;
                 };
                 let part_type = object.get("type").and_then(Value::as_str);
-                if !matches!(part_type, Some("input_text" | "text")) {
+                if part_type != Some("input_text") && part_type != Some("text") {
                     return ToolOutput::Unsupported;
                 }
                 let Some(value) = object.get("text").and_then(Value::as_str) else {
