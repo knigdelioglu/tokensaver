@@ -15,12 +15,18 @@ fn metrics(saved: u64) -> OptimizationMetrics {
 }
 
 #[test]
-fn distinguishes_disabled_from_no_eligible_result() {
+fn distinguishes_disabled_passthrough_and_no_eligible_result() {
     let mut ledger = SavingsLedger::default();
     ledger.record(OptimizationEvent::new(
         1_000,
         7,
         OptimizationOutcome::Disabled,
+        OptimizationMetrics::default(),
+    ));
+    ledger.record(OptimizationEvent::new(
+        1_500,
+        7,
+        OptimizationOutcome::NativePassthrough,
         OptimizationMetrics::default(),
     ));
     ledger.record(OptimizationEvent::new(
@@ -36,6 +42,7 @@ fn distinguishes_disabled_from_no_eligible_result() {
 
     let summary = ledger.all_time();
     assert_eq!(summary.disabled_requests, 1);
+    assert_eq!(summary.native_passthrough_requests, 1);
     assert_eq!(summary.no_eligible_requests, 1);
     assert_eq!(summary.tool_results_evaluated, 4);
     assert_eq!(summary.largest_tool_result_bytes, 18_000);
