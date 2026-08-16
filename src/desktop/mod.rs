@@ -47,13 +47,7 @@ struct TrayUi {
 impl TrayUi {
     fn build(app: &tauri::App<Wry>) -> tauri::Result<Self> {
         let status = MenuItem::with_id(app, "status", "Status: Starting", false, None::<&str>)?;
-        let codex = MenuItem::with_id(
-            app,
-            "codex",
-            "Codex config: Checking",
-            false,
-            None::<&str>,
-        )?;
+        let codex = MenuItem::with_id(app, "codex", "Codex config: Checking", false, None::<&str>)?;
         let request = MenuItem::with_id(app, "request", "Request: Idle", false, None::<&str>)?;
         let traffic = MenuItem::with_id(
             app,
@@ -200,10 +194,8 @@ impl TrayUi {
     ) -> tauri::Result<()> {
         self.status
             .set_text(format!("Status: {}", service_text(snapshot.service)))?;
-        self.codex.set_text(format!(
-            "Codex config: {}",
-            codex_text(snapshot.codex)
-        ))?;
+        self.codex
+            .set_text(format!("Codex config: {}", codex_text(snapshot.codex)))?;
         self.request.set_text(if snapshot.active_requests == 0 {
             "Request: Idle".to_owned()
         } else {
@@ -734,7 +726,10 @@ mod tests {
     #[test]
     fn traffic_diagnostics_distinguish_zero_savings_from_zero_traffic() {
         let savings = observed_without_savings();
-        assert_eq!(format_traffic(savings), "Traffic: Seen · 12 requests this session");
+        assert_eq!(
+            format_traffic(savings),
+            "Traffic: Seen · 12 requests this session"
+        );
         assert!(format_savings("This session", savings).contains("0 compacted / 12 observed"));
         assert!(format_optimizer_diagnostics(savings).contains("Responses: 10 · aged 0"));
         assert!(format_tool_result_diagnostics(savings).contains("42 evaluated · 0 eligible"));
