@@ -20,7 +20,7 @@ use crate::modules::aging::AgingPolicy;
 use super::capability::CallerCapability;
 use super::headers::{has_browser_origin, native_upstream_headers};
 use super::observation::TransportObservation;
-use super::request::{RequestDiagnostics, prepare_responses_body};
+use super::request::prepare_responses_body;
 use super::response_usage::ResponseUsageCollector;
 
 const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
@@ -69,7 +69,6 @@ pub(crate) struct TransportControl {
     active_requests: Arc<AtomicUsize>,
     dropped_observations: Arc<AtomicU64>,
     draining: Arc<AtomicBool>,
-    last_request_diagnostics: Arc<RwLock<Option<RequestDiagnostics>>>,
 }
 
 impl TransportControl {
@@ -89,10 +88,6 @@ impl TransportControl {
     #[allow(dead_code)]
     pub(crate) async fn aging_policy(&self) -> AgingPolicy {
         *self.aging_policy.read().await
-    }
-
-    pub(crate) async fn last_request_diagnostics(&self) -> Option<RequestDiagnostics> {
-        *self.last_request_diagnostics.read().await
     }
 
     pub(crate) fn active_requests(&self) -> usize {
@@ -134,7 +129,6 @@ impl BoundTransport {
         let active_requests = Arc::new(AtomicUsize::new(0));
         let dropped_observations = Arc::new(AtomicU64::new(0));
         let draining = Arc::new(AtomicBool::new(false));
-        let last_request_diagnostics = Arc::new(RwLock::new(None));
         let client = reqwest::Client::builder()
             .redirect(Policy::none())
             .connect_timeout(UPSTREAM_CONNECT_TIMEOUT)
@@ -147,7 +141,6 @@ impl BoundTransport {
             active_requests: active_requests.clone(),
             dropped_observations: dropped_observations.clone(),
             draining: draining.clone(),
-            last_request_diagnostics: last_request_diagnostics.clone(),
             observer: settings.observer,
             client,
         });
@@ -158,7 +151,6 @@ impl BoundTransport {
             active_requests,
             dropped_observations,
             draining,
-            last_request_diagnostics,
         };
 
         Ok(Self {
@@ -189,7 +181,6 @@ struct ServerState {
     active_requests: Arc<AtomicUsize>,
     dropped_observations: Arc<AtomicU64>,
     draining: Arc<AtomicBool>,
-    last_request_diagnostics: Arc<RwLock<Option<RequestDiagnostics>>>,
     observer: Option<mpsc::Sender<TransportObservation>>,
     client: reqwest::Client,
 }
@@ -321,9 +312,6 @@ async fn handle_request(
 
     let policy = *state.aging_policy.read().await;
     let prepared = prepare_responses_body(&body, content_encoding.as_deref(), &local_path, policy);
-    if let Some(diagnostics) = prepared.diagnostics {
-        *state.last_request_diagnostics.write().await = Some(diagnostics);
-    }
     let observation = TransportObservation {
         outcome: prepared.outcome,
         aging_stats: prepared.aging.stats.clone(),
