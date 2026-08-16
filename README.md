@@ -2,11 +2,11 @@
 
 TokenSaver is a focused local context optimizer for Codex. Its purpose is deliberately narrow: **reduce repeated input-token usage caused by large historical tool results without changing Codex's task, native model selection, account flow, tools, or normal workflow.**
 
-The project is inspired by the tool-result aging mechanism in [`duolahypercho/codex-router`](https://github.com/duolahypercho/codex-router), with `v0.4.0-beta.4` pinned as the initial behavioral reference. TokenSaver does not reproduce Codex Router's provider/model-routing product.
+The project is inspired by the tool-result aging mechanism in [`duolahypercho/codex-router`](https://github.com/duolahypercho/codex-router), with `v0.4.0-beta.4` pinned as the initial behavioral reference and later upstream aging/measurement work reviewed selectively. TokenSaver does not reproduce Codex Router's provider/model-routing product.
 
 ## The problem
 
-Coding agents repeatedly produce large terminal outputs, test/build logs, file reads, diffs, searches, and repository-inspection results. After the model has already consumed a large result, stateless later requests may continue carrying the same full historical payload.
+Coding agents repeatedly produce large terminal outputs, test/build logs, file reads, diffs, searches, and repository-inspection results. After the model has already consumed a large result, later requests may continue carrying the same full historical payload.
 
 TokenSaver targets that repeated context cost.
 
@@ -41,13 +41,15 @@ A historical result is compacted only when the safety policy proves it eligible:
 - supported/unambiguous protocol shape
 - replacement is smaller than the original
 
-Initial conservative policy:
+Initial conservative structural policy:
 
 - minimum result size: **32 KiB**
 - protected newest-result frontier: **4 results**
 - head preview: approximately **1024 UTF-16 code units**
 - tail preview: approximately **1024 UTF-16 code units**
 - identity: original UTF-8 byte length + **SHA-256**
+
+A fresh product installation starts **Token Saving off** because enabling aging changes historical context. An existing persisted user choice is preserved. The user can opt in from the tray or with `tokensaver saving on`.
 
 Receipt v1 carries verifiable metadata:
 
@@ -149,8 +151,9 @@ Key rules:
 - Responses WebSocket receives `426` for supported Codex HTTP fallback
 - upstream model responses are streamed without semantic rewrite
 - hard OFF mode performs no context rewrite
+- the presence of native `previous_response_id` is observable without logging its value, and TokenSaver preserves native chaining rather than copying a provider router's stateless-history assumption
 
-See [docs/CODEX_TRANSPORT_CONTRACT.md](./docs/CODEX_TRANSPORT_CONTRACT.md).
+See [docs/CODEX_TRANSPORT_CONTRACT.md](./docs/CODEX_TRANSPORT_CONTRACT.md) and [docs/NATIVE_AGING_VALIDATION.md](./docs/NATIVE_AGING_VALIDATION.md).
 
 ## macOS menu-bar runtime
 
@@ -169,7 +172,7 @@ Today: 2.8 MB saved · ~742K tokens · 41 results / 24 requests
 All time: 10.1 MB saved · ~2.6M tokens · 143 results / 82 requests
 Last optimization 16:12: 84 KB → 3 KB · 81 KB saved · ~20K tokens
 
-✓ Token Saving Enabled
+  Token Saving Enabled   ← off on a fresh install until explicitly enabled
   Disconnect from Codex
 ✓ Start at Login
   Prepare for Uninstall…
@@ -202,6 +205,7 @@ tokensaver disconnect
 tokensaver saving on
 tokensaver saving off
 tokensaver stats
+tokensaver diagnostics
 tokensaver config show
 tokensaver config set min-bytes <bytes>
 tokensaver config set frontier <count>
@@ -215,16 +219,41 @@ Behavior:
 
 - `connect`, `disconnect`, and `saving` require the live menu-bar runtime
 - `stats` can report persisted content-free counters while the runtime is closed
+- `diagnostics` explains request shape, skip reasons, observed provider tokens, and aged-vs-unaged cache evidence without printing request/result content
 - `config show/set` can use persisted owner-private preferences while offline
 - structural policy changes require Codex to be disconnected
 - saving on/off remains live-switchable
 - doctor reports redacted PASS/WARN/FAIL health checks
 - uninstall purge is blocked while runtime/restoration state says cleanup is unsafe
-- measured bytes and estimated tokens are always distinguished
+- measured bytes, estimated tokens, and provider-reported usage are always distinguished
 
-Runtime preferences schema v2 persists `saving_enabled`, `connect_on_launch`, `min_bytes`, `frontier`, and `preview_code_units`. Legacy v1 preferences receive the original conservative policy defaults.
+Runtime preferences schema v2 persists `saving_enabled`, `connect_on_launch`, `min_bytes`, `frontier`, and `preview_code_units`. Legacy v1 preferences preserve their explicit saving choice and receive conservative defaults for missing structural policy fields.
 
 See [docs/CLI.md](./docs/CLI.md).
+
+## Native aging validation and release evidence
+
+The current P0–P6 remediation track adds:
+
+- content-free native request-shape diagnostics
+- explicit preservation proof for `previous_response_id`
+- provider input/cache/output usage extraction from unchanged responses
+- aggregate skip reasons
+- aged-vs-unaged prompt-cache evidence
+- explicit live provider token A/B
+- omitted-middle recovery/hallucination quality A/B
+- a fail-closed aging evidence gate
+
+The live probes never run implicitly because they may consume provider/account quota:
+
+```bash
+python3 scripts/live-token-ab.py --yes ...
+python3 scripts/live-aging-quality.py --yes ...
+python3 scripts/cache-evidence.py ...
+python3 scripts/verify-aging-release.py ...
+```
+
+See [docs/NATIVE_AGING_VALIDATION.md](./docs/NATIVE_AGING_VALIDATION.md) and [docs/MEASUREMENT.md](./docs/MEASUREMENT.md).
 
 ## Packaging, update, and uninstall
 
@@ -281,7 +310,7 @@ Runtime bounds currently authored:
 - control message/response: **64 KiB max**
 - control connect/read/write timeout: **5 seconds**
 
-A saturated telemetry queue never blocks inference; it increments a dropped-observation health counter and doctor warns that savings may be incomplete. Savings observations are emitted only after the upstream request returns response headers, so an upstream connection failure does not inflate savings.
+A saturated telemetry queue never blocks inference; it increments a dropped-observation health counter and doctor warns that savings may be incomplete. Provider usage parsing is bounded and side-band; telemetry inability must not rewrite or fail inference.
 
 Codex compatibility is tied to pinned protocol baseline `openai/codex@9ded177ce7c1c0bd2047f902936c177612ab3434` and an explicitly validated exact `codex --version` identity. Unknown builds WARN rather than being silently declared supported. The validation allow-list remains empty until the final executed validation pass proves a build.
 
@@ -312,6 +341,9 @@ Omitted bytes are never presented as known content.
 ### Measure truthfully
 Directly measured bytes, estimated tokens, provider-reported usage, and telemetry completeness are distinct facts.
 
+### Preserve native semantics
+Provider-router transport assumptions are not copied onto TokenSaver's first-party native path without direct evidence.
+
 ### Safe lifecycle over convenience
 TokenSaver refuses unsafe config restoration, disconnect, normal process exit, or state purge.
 
@@ -319,7 +351,7 @@ TokenSaver refuses unsafe config restoration, disconnect, normal process exit, o
 Resource saturation is bounded and surfaced rather than translated into unbounded memory/task growth.
 
 ### Evidence before release claims
-Unknown Codex builds and missing validation manifests remain unproven rather than being guessed safe.
+Unknown Codex builds and missing validation evidence remain unproven rather than being guessed safe.
 
 ## Required invariants
 
@@ -344,6 +376,8 @@ Among the project-wide invariants:
 17. runtime request/queue/control growth is explicitly bounded
 18. unknown Codex builds are not silently release-certified
 19. release packaging fails closed without exact validation evidence
+20. native `previous_response_id` values are never persisted by optimizer diagnostics and their presence is preserved across aging
+21. provider usage observation never changes upstream response semantics
 
 The complete invariant set is in [SCOPE.md](./SCOPE.md).
 
@@ -358,10 +392,11 @@ The complete invariant set is in [SCOPE.md](./SCOPE.md).
 - **Phase 6 — CLI/doctor:** implemented, validation deferred
 - **Phase 7 — Packaging/update/uninstall:** implemented, validation deferred
 - **Phase 8 — Hardening/release gates:** implemented, validation deferred
+- **Native aging P0–P6 remediation:** implemented, final repository/live validation deferred
 
-Per project instruction, implementation has been authored **without running tests, builds, cargo checks, linters, formatters, CI, benchmarks, CLI/doctor smoke tests, package builds, release verification, or live Codex validation**. Final execution is intentionally deferred.
+Per project instruction, P0–P6 implementation was authored **without running tests, builds, cargo checks, linters, formatters, CI, live benchmarks, CLI/doctor smoke tests, package builds, release verification, or live Codex validation**. The collective repository test pass is intentionally deferred until P6 implementation is complete; live provider probes remain separately opt-in because they spend quota.
 
-See [ROADMAP.md](./ROADMAP.md).
+See [ROADMAP.md](./ROADMAP.md) and [docs/NATIVE_AGING_VALIDATION.md](./docs/NATIVE_AGING_VALIDATION.md).
 
 ## Engineering documents
 
@@ -369,12 +404,14 @@ See [ROADMAP.md](./ROADMAP.md).
 - [ROADMAP.md](./ROADMAP.md) — phased implementation plan and release gates
 - [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — modular-monolith boundaries
 - [docs/CODEX_TRANSPORT_CONTRACT.md](./docs/CODEX_TRANSPORT_CONTRACT.md) — native Codex integration contract
+- [docs/NATIVE_AGING_VALIDATION.md](./docs/NATIVE_AGING_VALIDATION.md) — current P0–P6 native aging validation/remediation contract
+- [docs/MEASUREMENT.md](./docs/MEASUREMENT.md) — byte/token/cache telemetry semantics
 - [docs/RECOVERY.md](./docs/RECOVERY.md) — receipt/recovery evidence rules
 - [docs/DESKTOP_RUNTIME.md](./docs/DESKTOP_RUNTIME.md) — macOS runtime/tray lifecycle contract
 - [docs/CLI.md](./docs/CLI.md) — CLI/control-channel/doctor contract
 - [docs/PACKAGING.md](./docs/PACKAGING.md) — packaging/update/uninstall contract
 - [docs/HARDENING.md](./docs/HARDENING.md) — runtime bounds, compatibility, and fail-closed release contract
-- [docs/UPSTREAM_REFERENCE.md](./docs/UPSTREAM_REFERENCE.md) — pinned Codex Router behavior adopted/rejected
+- [docs/UPSTREAM_REFERENCE.md](./docs/UPSTREAM_REFERENCE.md) — pinned initial and selectively reviewed current Codex Router aging behavior
 - [AGENTS.md](./AGENTS.md) — implementation guardrails
 
 ## Attribution
