@@ -1,6 +1,6 @@
 # TokenSaver Packaging, Update, and Uninstall Contract
 
-Phase 7 keeps packaging operationally separate from TokenSaver's context-optimization domain. A package/update/uninstall action must never weaken Codex configuration restoration or delete user state it cannot prove TokenSaver owns.
+Phase 7 keeps packaging operationally separate from TokenSaver's context-optimization domain. A package/update/uninstall action must never weaken Codex configuration restoration or delete user state it cannot prove TokenSaver owns. Phase 8 additionally separates **development packaging** from a package represented as a **validated release**.
 
 ## macOS package target
 
@@ -21,7 +21,7 @@ assets/app-icon.svg
 
 Generated PNG/ICNS files live in `icons/` and are intentionally gitignored.
 
-## Packaging command
+## Development packaging
 
 Use:
 
@@ -29,21 +29,55 @@ Use:
 bash scripts/package-macos.sh
 ```
 
-The script deliberately performs these release steps in order:
+The script:
 
-1. require macOS
-2. require Cargo and a compatible Tauri 2 CLI
-3. generate platform icons from `assets/app-icon.svg`
-4. merge `tauri.release.conf.json`
-5. build `.app` and `.dmg` bundles
+1. requires macOS
+2. requires Cargo and a compatible Tauri 2 CLI
+3. generates platform icons from `assets/app-icon.svg`
+4. merges `tauri.release.conf.json`
+5. builds `.app` and `.dmg` bundles
 
-The script does not run tests, linters, formatters, benchmarks, or application smoke tests. Those remain part of the explicit final validation pass.
+This is a **development/local package path**. It deliberately does not run tests, linters, formatters, benchmarks, or smoke tests and therefore must not by itself be treated as evidence that the build is release-ready.
+
+## Validated release packaging
+
+A package represented by the project release path must use:
+
+```bash
+bash scripts/release-macos.sh
+```
+
+Before packaging, that script runs:
+
+```text
+scripts/verify-release-gates.py
+```
+
+Release packaging is blocked unless local `validation/release-manifest.json` proves the required Phase 8 gates for:
+
+- the exact current Git commit
+- the exact current TokenSaver Cargo version
+- pinned Codex protocol baseline `9ded177ce7c1c0bd2047f902936c177612ab3434`
+- the exact installed `codex --version` identity used during final validation
+- every required release gate
+
+The completed manifest is local evidence and is gitignored. The repository contains only:
+
+```text
+validation/release-manifest.example.json
+```
+
+with every gate set to `false`.
+
+The verifier does not run tests or invent PASS values. It only rejects stale, incomplete, mismatched, or missing evidence. See `docs/HARDENING.md` for the authoritative release-gate contract.
 
 ## Signing and notarization
 
 No Apple signing identity, certificate, notarization credential, private key, or updater signing key is committed to this repository.
 
 Release signing/notarization must therefore be supplied by the release environment. A local unsigned/ad-hoc package must not be represented as a production-signed release.
+
+Passing the local release-manifest gate also does not mean Apple signing/notarization occurred. Distribution claims must distinguish application validation from platform signing/notarization.
 
 TokenSaver does not hard-code an ad-hoc signing identity in the base configuration because that would blur the distinction between a local package and a distributable notarized build.
 
@@ -161,6 +195,8 @@ Current versioned state includes:
 
 A new application version must migrate or reject unsupported state explicitly; it must not silently reinterpret an unknown schema.
 
+Codex protocol compatibility is also evidence-based. An unknown/unvalidated `codex --version` identity remains a doctor warning until an exact build passes final release validation. It is not silently accepted as compatible merely because TokenSaver can start.
+
 ## Deferred validation
 
 Still deferred to the user's final executed validation pass:
@@ -176,5 +212,7 @@ Still deferred to the user's final executed validation pass:
 - state purge ownership tests
 - snapshot-blocks-purge test
 - install/update/uninstall round trip
+- release verifier negative cases
+- completed validation manifest + positive release-gate case
 
-No packaging/build/test/lint/formatter/CI/notarization command has been executed while implementing this phase.
+No packaging/build/test/lint/formatter/CI/release-verifier/notarization command has been executed while implementing these phases.
