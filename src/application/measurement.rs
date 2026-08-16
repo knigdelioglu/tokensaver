@@ -91,8 +91,8 @@ fn build_event(
     diagnostics: Option<&RequestDiagnostics>,
     provider_usage: Option<ProviderUsage>,
 ) -> OptimizationEvent {
-    let diagnostics_largest = diagnostics
-        .map_or(0, |value| value.largest_textual_tool_result_bytes as u64);
+    let diagnostics_largest =
+        diagnostics.map_or(0, |value| value.largest_textual_tool_result_bytes as u64);
     let metrics = OptimizationMetrics {
         tool_results_evaluated: stats.tool_results_evaluated as u64,
         tool_results_eligible: stats.tool_results_eligible as u64,
@@ -101,16 +101,18 @@ fn build_event(
             .max(diagnostics_largest),
         protected_frontier: diagnostics.map_or(0, |value| value.protected_frontier as u64),
         unsupported_output: diagnostics.map_or(0, |value| value.unsupported_output as u64),
-        at_or_below_threshold: diagnostics
-            .map_or(0, |value| value.at_or_below_threshold as u64),
+        at_or_below_threshold: diagnostics.map_or(0, |value| value.at_or_below_threshold as u64),
         unconsumed: diagnostics.map_or(0, |value| value.unconsumed as u64),
         receipt_not_smaller: diagnostics.map_or(0, |value| value.receipt_not_smaller as u64),
         responses_with_previous_response_id: diagnostics
-            .is_some_and(|value| value.has_previous_response_id) as u64,
+            .is_some_and(|value| value.has_previous_response_id)
+            as u64,
         responses_without_previous_response_id: diagnostics
-            .is_some_and(|value| !value.has_previous_response_id) as u64,
+            .is_some_and(|value| !value.has_previous_response_id)
+            as u64,
         previous_response_id_preserved: diagnostics
-            .is_some_and(|value| value.previous_response_id_preserved) as u64,
+            .is_some_and(|value| value.previous_response_id_preserved)
+            as u64,
         aging_pass_ran: diagnostics.is_some_and(|value| value.aging_pass_ran) as u64,
         input_items: diagnostics.map_or(0, |value| value.input_items as u64),
         function_call_outputs: diagnostics.map_or(0, |value| value.function_call_outputs as u64),
