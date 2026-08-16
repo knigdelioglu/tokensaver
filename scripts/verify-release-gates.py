@@ -3,8 +3,8 @@
 
 This verifier intentionally does not run the gates. The final validation pass
 creates a local validation/release-manifest.json after executing them. Release
-packaging then verifies that the evidence belongs to the current source commit
-and the currently installed Codex CLI identity.
+packaging then verifies that the evidence belongs to the exact clean source
+commit and the currently installed Codex CLI identity.
 """
 
 from __future__ import annotations
@@ -77,6 +77,12 @@ def main() -> None:
 
     if manifest.get("schema_version") != 1:
         fail("validation manifest schema_version must be 1")
+
+    # The package must be built from exactly the tree that was validated. A HEAD
+    # SHA alone is insufficient because Cargo/Tauri build working-tree changes.
+    dirty = command_output("git", "status", "--porcelain", "--untracked-files=normal")
+    if dirty:
+        fail("working tree is not clean; commit or discard source changes before release packaging")
 
     current_commit = command_output("git", "rev-parse", "HEAD")
     if manifest.get("source_commit") != current_commit:
