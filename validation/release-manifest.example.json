@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "tokensaver_version": "0.1.0",
+  "source_commit": "REPLACE_WITH_VALIDATED_GIT_HEAD",
+  "validated_codex_baseline_commit": "9ded177ce7c1c0bd2047f902936c177612ab3434",
+  "validated_codex_cli_version": "REPLACE_WITH_EXACT_CODEX_VERSION_OUTPUT",
+  "gates": {
+    "deterministic_aging_suite": false,
+    "architecture_contract_suite": false,
+    "telemetry_benchmark_suite": false,
+    "recovery_quality_structural_suite": false,
+    "transport_integration_suite": false,
+    "config_restoration_drift_suite": false,
+    "desktop_runtime_tray_suite": false,
+    "cli_doctor_suite": false,
+    "real_codex_smoke_test": false,
+    "compaction_bypass_test": false,
+    "on_off_payload_diff_invariant": false,
+    "tray_backend_state_consistency": false,
+    "privacy_redaction_review": false,
+    "install_uninstall_round_trip": false,
+    "long_session_savings_quality_benchmark": false
+  }
+}
