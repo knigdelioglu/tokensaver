@@ -6,9 +6,37 @@ use super::{
     receipt::build_receipt,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AgingSkipReason {
+    ProtectedFrontier,
+    UnsupportedOutput,
+    AtOrBelowThreshold,
+    Unconsumed,
+    ReceiptNotSmaller,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AgingDecision {
+    Aged,
+    Skipped(AgingSkipReason),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ToolResultEvaluation {
+    pub(crate) item_index: usize,
+    pub(crate) source_kind: ToolResultKind,
+    pub(crate) source_call_id: Option<String>,
+    pub(crate) decision: AgingDecision,
+    pub(crate) source_bytes: Option<usize>,
+    pub(crate) receipt_bytes: Option<usize>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct AgingStats {
+    pub(crate) tool_results_evaluated: usize,
+    pub(crate) tool_results_eligible: usize,
     pub(crate) tool_results_aged: usize,
+    pub(crate) largest_tool_result_bytes: usize,
     pub(crate) tool_result_bytes_before: usize,
     pub(crate) tool_result_bytes_after: usize,
     pub(crate) tool_result_bytes_saved: usize,
@@ -33,10 +61,11 @@ pub(crate) struct AgedReplacement {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct AgingResult {
     pub(crate) replacements: Vec<AgedReplacement>,
+    pub(crate) evaluations: Vec<ToolResultEvaluation>,
     pub(crate) stats: AgingStats,
 }
 
-/// Evaluate a normalized request history and return only deterministic aging
+/// Evaluate a normalized request history and return deterministic aging
 /// decisions. The original history is never mutated by this domain function.
 ///
 /// The caller owns protocol-specific application of replacements. If a caller
@@ -52,32 +81,80 @@ pub(crate) fn age_tool_results(input: &[HistoryItem], policy: AgingPolicy) -> Ag
     let call_names = call_name_map(input);
 
     let mut replacements = Vec::new();
+    let mut evaluations = Vec::new();
     let mut stats = AgingStats::default();
 
     for (index, item) in input.iter().enumerate() {
-        if protected_indexes.contains(&index) {
-            continue;
-        }
-
         let Some((kind, call_id, output)) = item.tool_result() else {
             continue;
         };
-        let Some(text) = output.textual_value() else {
+
+        stats.tool_results_evaluated += 1;
+        let source_bytes = output.textual_byte_len();
+        if let Some(bytes) = source_bytes {
+            stats.largest_tool_result_bytes = stats.largest_tool_result_bytes.max(bytes);
+        }
+
+        let skipped = |reason| ToolResultEvaluation {
+            item_index: index,
+            source_kind: kind,
+            source_call_id: call_id.map(str::to_owned),
+            decision: AgingDecision::Skipped(reason),
+            source_bytes,
+            receipt_bytes: None,
+        };
+
+        if protected_indexes.contains(&index) {
+            evaluations.push(skipped(AgingSkipReason::ProtectedFrontier));
+            continue;
+        }
+
+        let Some(before) = source_bytes else {
+            evaluations.push(skipped(AgingSkipReason::UnsupportedOutput));
             continue;
         };
 
-        let before = text.len();
-        if before <= policy.min_bytes || !acted_after[index] {
+        if before <= policy.min_bytes {
+            evaluations.push(skipped(AgingSkipReason::AtOrBelowThreshold));
             continue;
         }
+
+        if !acted_after[index] {
+            evaluations.push(skipped(AgingSkipReason::Unconsumed));
+            continue;
+        }
+
+        stats.tool_results_eligible += 1;
+
+        let Some(text) = output.textual_value() else {
+            evaluations.push(skipped(AgingSkipReason::UnsupportedOutput));
+            continue;
+        };
 
         let tool_name = call_id.and_then(|id| call_names.get(id).copied());
         let receipt = build_receipt(&text, tool_name, policy.preview_code_units);
         let after = receipt.len();
 
         if after >= before {
+            evaluations.push(ToolResultEvaluation {
+                item_index: index,
+                source_kind: kind,
+                source_call_id: call_id.map(str::to_owned),
+                decision: AgingDecision::Skipped(AgingSkipReason::ReceiptNotSmaller),
+                source_bytes: Some(before),
+                receipt_bytes: Some(after),
+            });
             continue;
         }
+
+        evaluations.push(ToolResultEvaluation {
+            item_index: index,
+            source_kind: kind,
+            source_call_id: call_id.map(str::to_owned),
+            decision: AgingDecision::Aged,
+            source_bytes: Some(before),
+            receipt_bytes: Some(after),
+        });
 
         replacements.push(AgedReplacement {
             item_index: index,
@@ -99,6 +176,7 @@ pub(crate) fn age_tool_results(input: &[HistoryItem], policy: AgingPolicy) -> Ag
 
     AgingResult {
         replacements,
+        evaluations,
         stats,
     }
 }
