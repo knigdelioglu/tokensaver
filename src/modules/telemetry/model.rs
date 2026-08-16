@@ -17,6 +17,7 @@ pub(crate) enum OptimizationOutcome {
 pub(crate) struct ProviderUsage {
     pub(crate) input_tokens: u64,
     pub(crate) cached_input_tokens: u64,
+    pub(crate) output_tokens: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -25,6 +26,11 @@ pub(crate) struct OptimizationMetrics {
     pub(crate) tool_results_eligible: u64,
     pub(crate) tool_results_compacted: u64,
     pub(crate) largest_tool_result_bytes: u64,
+    pub(crate) protected_frontier: u64,
+    pub(crate) unsupported_output: u64,
+    pub(crate) at_or_below_threshold: u64,
+    pub(crate) unconsumed: u64,
+    pub(crate) receipt_not_smaller: u64,
     pub(crate) bytes_before: u64,
     pub(crate) bytes_after: u64,
     pub(crate) bytes_saved: u64,
