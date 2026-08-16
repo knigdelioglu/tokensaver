@@ -1,7 +1,7 @@
 use std::fmt;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -16,8 +16,8 @@ use crate::modules::codex_integration::{
     connection_state_with_snapshot, CodexConnectionState,
 };
 use crate::modules::runtime::{
-    CodexStatus, RuntimePreferencesError, RuntimePreferencesStore, RuntimeStatus,
-    RuntimeStatusStore, ServiceStatus,
+    CodexStatus, RuntimePreferencesError, RuntimePreferencesStore, RuntimeStatusStore,
+    ServiceStatus,
 };
 use crate::modules::telemetry::{
     DurableSavingsStore, LastOptimization, SavingsLedger, SavingsStoreError, SavingsSummary,
@@ -26,7 +26,7 @@ use crate::modules::transport::TransportControl;
 
 use super::codex_connection::{
     disconnect_native_codex, prepare_native_codex_connection, CodexConnectionError,
-    CodexConnectionRecord,
+    CodexConnectionRecord, PreparedCodexConnection,
 };
 use super::measurement::event_from_transport_observation;
 
@@ -34,13 +34,51 @@ const SNAPSHOT_FILE: &str = "codex-config-snapshot.json";
 const SAVINGS_FILE: &str = "savings.json";
 const PREFERENCES_FILE: &str = "runtime-preferences.json";
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DesktopServiceState {
+    Starting,
+    Running,
+    Error,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DesktopCodexState {
+    Disconnected,
+    Connecting,
+    Connected,
+    Drifted,
+    Error,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SavingsView {
+    pub(crate) bytes_saved: u64,
+    pub(crate) estimated_tokens_saved: u64,
+    pub(crate) tool_results_compacted: u64,
+    pub(crate) aged_requests: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LastOptimizationView {
+    pub(crate) observed_at_epoch_ms: u64,
+    pub(crate) bytes_before: u64,
+    pub(crate) bytes_after: u64,
+    pub(crate) bytes_saved: u64,
+    pub(crate) estimated_tokens_saved: u64,
+    pub(crate) tool_results_compacted: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DesktopRuntimeSnapshot {
-    pub(crate) runtime: RuntimeStatus,
-    pub(crate) session: SavingsSummary,
-    pub(crate) today: SavingsSummary,
-    pub(crate) all_time: SavingsSummary,
-    pub(crate) last_optimization: Option<LastOptimization>,
+    pub(crate) service: DesktopServiceState,
+    pub(crate) codex: DesktopCodexState,
+    pub(crate) saving_enabled: bool,
+    pub(crate) active_requests: usize,
+    pub(crate) session: SavingsView,
+    pub(crate) today: SavingsView,
+    pub(crate) all_time: SavingsView,
+    pub(crate) last_optimization: Option<LastOptimizationView>,
+    pub(crate) last_error: Option<String>,
 }
 
 #[derive(Debug)]
@@ -118,7 +156,6 @@ pub(crate) struct DesktopRuntimeController {
     session_ledger: Arc<Mutex<SavingsLedger>>,
     durable_savings: Arc<Mutex<DurableSavingsStore>>,
     session_id: u64,
-    data_dir: PathBuf,
     snapshot_path: PathBuf,
 }
 
@@ -146,7 +183,6 @@ impl DesktopRuntimeController {
             durable_savings: Arc::new(Mutex::new(durable_savings)),
             session_id: random_session_id(),
             snapshot_path: data_dir.join(SNAPSHOT_FILE),
-            data_dir,
         })
     }
 
@@ -203,11 +239,15 @@ impl DesktopRuntimeController {
             }
         };
 
-        let control = prepared.control.clone();
-        let record = prepared.record.clone();
+        let PreparedCodexConnection {
+            server,
+            control,
+            record,
+            observations,
+        } = prepared;
         let status_for_server = self.status.clone();
         let server_task = tokio::spawn(async move {
-            if let Err(error) = prepared.server.serve().await {
+            if let Err(error) = server.serve().await {
                 status_for_server.update(|runtime| {
                     runtime.service = ServiceStatus::Error;
                     runtime.codex = CodexStatus::Error;
@@ -219,12 +259,11 @@ impl DesktopRuntimeController {
         let session_ledger = self.session_ledger.clone();
         let durable_savings = self.durable_savings.clone();
         let session_id = self.session_id;
-        let mut observations = prepared.observations;
+        let mut observations = observations;
         let observation_task = tokio::spawn(async move {
             while let Some(observation) = observations.recv().await {
-                let observed_at_epoch_ms = now_epoch_ms();
                 let event = event_from_transport_observation(
-                    observed_at_epoch_ms,
+                    now_epoch_ms(),
                     session_id,
                     &observation,
                     None,
@@ -356,7 +395,7 @@ impl DesktopRuntimeController {
                 Ok(CodexConnectionState::NotConnected) => {
                     runtime.codex = CodexStatus::Error;
                     runtime.last_error = Some(
-                        "TokenSaver transport is running but Codex is no longer configured to use it"
+                        "TokenSaver transport is running but Codex no longer points at it"
                             .to_owned(),
                     );
                 }
@@ -374,12 +413,17 @@ impl DesktopRuntimeController {
         let runtime = self.status.snapshot();
         let session = self.session_ledger.lock().await.for_session(self.session_id);
         let savings = self.durable_savings.lock().await;
+
         DesktopRuntimeSnapshot {
-            runtime,
-            session,
-            today: savings.for_day(&local_day),
-            all_time: savings.all_time(),
-            last_optimization: savings.last_optimization(),
+            service: map_service_status(runtime.service),
+            codex: map_codex_status(runtime.codex),
+            saving_enabled: runtime.saving_enabled,
+            active_requests: runtime.active_requests,
+            session: savings_view(session),
+            today: savings_view(savings.for_day(&local_day)),
+            all_time: savings_view(savings.all_time()),
+            last_optimization: savings.last_optimization().map(last_optimization_view),
+            last_error: runtime.last_error,
         }
     }
 
@@ -397,9 +441,43 @@ impl DesktopRuntimeController {
         }
         Ok(())
     }
+}
 
-    pub(crate) fn data_dir(&self) -> &Path {
-        &self.data_dir
+fn savings_view(summary: SavingsSummary) -> SavingsView {
+    SavingsView {
+        bytes_saved: summary.bytes_saved,
+        estimated_tokens_saved: summary.estimated_tokens_saved,
+        tool_results_compacted: summary.tool_results_compacted,
+        aged_requests: summary.aged_requests,
+    }
+}
+
+fn last_optimization_view(last: LastOptimization) -> LastOptimizationView {
+    LastOptimizationView {
+        observed_at_epoch_ms: last.observed_at_epoch_ms,
+        bytes_before: last.bytes_before,
+        bytes_after: last.bytes_after,
+        bytes_saved: last.bytes_saved,
+        estimated_tokens_saved: last.estimated_tokens_saved,
+        tool_results_compacted: last.tool_results_compacted,
+    }
+}
+
+fn map_service_status(status: ServiceStatus) -> DesktopServiceState {
+    match status {
+        ServiceStatus::Stopped | ServiceStatus::Starting => DesktopServiceState::Starting,
+        ServiceStatus::Running => DesktopServiceState::Running,
+        ServiceStatus::Error => DesktopServiceState::Error,
+    }
+}
+
+fn map_codex_status(status: CodexStatus) -> DesktopCodexState {
+    match status {
+        CodexStatus::Disconnected => DesktopCodexState::Disconnected,
+        CodexStatus::Connecting => DesktopCodexState::Connecting,
+        CodexStatus::Connected => DesktopCodexState::Connected,
+        CodexStatus::Drifted => DesktopCodexState::Drifted,
+        CodexStatus::Error => DesktopCodexState::Error,
     }
 }
 
