@@ -27,6 +27,21 @@ impl ToolOutput {
             Self::Unsupported => None,
         }
     }
+
+    /// Returns the exact UTF-8 byte length without materializing concatenated
+    /// text parts. This lets measurement inspect even protected results without
+    /// copying large payloads merely to compute observability metadata.
+    pub(crate) fn textual_byte_len(&self) -> Option<usize> {
+        match self {
+            Self::Text(value) => Some(value.len()),
+            Self::TextParts(parts) => Some(
+                parts
+                    .iter()
+                    .fold(0usize, |total, part| total.saturating_add(part.len())),
+            ),
+            Self::Unsupported => None,
+        }
+    }
 }
 
 /// Transport-agnostic normalized history item understood by the aging domain.
