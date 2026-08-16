@@ -20,8 +20,13 @@ if ! cargo tauri --version >/dev/null 2>&1; then
 fi
 
 ICON_SOURCE="assets/app-icon.svg"
+RELEASE_CONFIG="tauri.release.conf.json"
 if [[ ! -f "$ICON_SOURCE" ]]; then
   echo "Missing icon source: $ICON_SOURCE" >&2
+  exit 2
+fi
+if [[ ! -f "$RELEASE_CONFIG" ]]; then
+  echo "Missing release bundle config: $RELEASE_CONFIG" >&2
   exit 2
 fi
 
@@ -29,5 +34,6 @@ fi
 cargo tauri icon "$ICON_SOURCE" --output icons
 
 # Self-updater artifacts are intentionally disabled in tauri.conf.json until
-# TokenSaver has a real updater signing key and trusted release endpoint.
-cargo tauri build --bundles app,dmg "$@"
+# TokenSaver has a real updater signing key and trusted release endpoint. The
+# release overlay only adds generated branded icon paths.
+cargo tauri build --config "$RELEASE_CONFIG" --bundles app,dmg "$@"
