@@ -103,7 +103,8 @@ Implemented:
 - content-free optimization events and metrics
 - outcomes:
   - disabled
-  - bypassed
+  - conversation-compaction bypass
+  - native Codex passthrough
   - fail-original
   - evaluated/no eligible result
   - evaluated/no savings
@@ -136,7 +137,7 @@ Routine telemetry contains no original tool-result body or receipt.
 
 **Status: IMPLEMENTED — VALIDATION DEFERRED**
 
-**Goal:** transparently run normal native Codex Responses traffic through TokenSaver without importing Codex Router's provider-routing scope.
+**Goal:** transparently run normal built-in Codex/OpenAI provider traffic through TokenSaver without importing Codex Router's provider-routing scope.
 
 `docs/CODEX_TRANSPORT_CONTRACT.md` is authoritative.
 
@@ -156,13 +157,22 @@ Verified facts used by the implementation:
 - HTTP `426 Upgrade Required` triggers Codex WebSocket → HTTP fallback
 - current ChatGPT request compression can use Zstandard
 - native remote compaction uses `responses/compact`
+- the same provider base URL is also used by native `models`, memory summarization, standalone search, and image endpoints
+- realtime/WebRTC request shape is base-URL-sensitive and therefore must not inherit TokenSaver's Responses loopback URL
 
 ## 3.1 Codex configuration integration — implemented
 
-TokenSaver owns exactly one Codex key:
+TokenSaver always owns the temporary Responses base URL while connected:
 
 ```toml
-openai_base_url = "http://127.0.0.1:<port>/<capability>"
+openai_base_url = "http://127.0.0.1:<port>/<64-hex-capability>/v1"
+```
+
+If the user has not already configured them, TokenSaver also temporarily installs native realtime bypasses:
+
+```toml
+experimental_realtime_webrtc_call_base_url = "<native ChatGPT Codex URL>"
+experimental_realtime_ws_base_url = "https://api.openai.com/v1"
 ```
 
 Implemented:
@@ -171,13 +181,15 @@ Implemented:
 - same Codex-home resolution rule
 - TOML-preserving edit with `toml_edit`
 - pre-existing `openai_base_url` preservation
+- pre-existing user realtime overrides left untouched
 - exact restore/removal on disconnect
-- drift detection before restoration
+- per-owned-key drift detection before restoration
 - owner-only versioned restoration snapshot
 - atomic same-directory config writes
 - snapshot written before Codex config mutation
 - stale/unsafe snapshot detection
 - crash/restart endpoint reuse
+- custom `chatgpt_base_url` respected when deriving the managed WebRTC bypass
 
 TokenSaver does not modify model selection, reasoning settings, MCP configuration, skills, permissions, project trust, subagent configuration, or unrelated Codex settings.
 
@@ -188,17 +200,34 @@ Implemented:
 - IPv4 loopback-only listener
 - OS-selected free port support
 - 256-bit random caller capability encoded in URL path
+- configured capability base ends in `/v1`
 - constant-time capability comparison
 - browser-origin rejection
 - no permissive CORS behavior
-- fixed native upstream; no arbitrary forward-proxy target
-- only supported Responses and compact paths
-- POST/JSON enforcement for HTTP inference
+- fixed first-party upstreams only; no arbitrary forward-proxy target
+- redirects disabled on upstream HTTP client
 - streamed upstream response relay without model-response rewriting
 - hop-by-hop response header filtering
-- redirects disabled on upstream HTTP client
+- raw query-string preservation
+- finite native path/method allow-list
 
-## 3.3 Native authentication passthrough — implemented
+Allowed native routes:
+
+| Local path | Method | TokenSaver behavior |
+|---|---:|---|
+| `/v1/responses` | POST | eligible for aging |
+| `/v1/responses/compact` | POST | exact aging bypass |
+| `/v1/models` | GET | native passthrough |
+| `/v1/memories/trace_summarize` | POST | native passthrough |
+| `/v1/alpha/search` | POST | native passthrough |
+| `/v1/images/generations` | POST | native passthrough |
+| `/v1/images/edits` | POST | native passthrough |
+
+Unknown paths are rejected rather than becoming a generic authenticated proxy.
+
+The local `/v1` prefix is stripped exactly once before joining the native first-party provider base URL, preventing duplicate `/v1` segments.
+
+## 3.3 Native authentication and upstream preservation — implemented
 
 Implemented:
 
@@ -208,13 +237,17 @@ Implemented:
 - arbitrary cookies/browser/proxy headers excluded
 - capability is local transport auth only and is never forwarded upstream
 - no credential fields in transport observations
+- account-scoped requests carrying `ChatGPT-Account-ID`/FedRAMP routing are sent to the ChatGPT Codex backend
+- API-key-style requests without account routing are sent to the OpenAI API base
+- TokenSaver does not parse bearer-token contents to make this decision
 
-## 3.4 WebSocket and compression compatibility — implemented
+## 3.4 WebSocket, realtime, and compression compatibility — implemented
 
 Implemented:
 
-- WebSocket Upgrade attempt receives `426 Upgrade Required`
-- HTTP Responses path handles subsequent fallback
+- Responses WebSocket Upgrade attempt receives `426 Upgrade Required`
+- HTTP Responses path handles subsequent Codex fallback
+- realtime/WebRTC traffic is deliberately kept off the TokenSaver loopback via native Codex config overrides when the user has no existing override
 - request encoding support:
   - identity
   - zstd
@@ -226,7 +259,8 @@ Implemented:
 - multi-encoding decode/encode ordering
 - original encoded bytes retained when no rewrite is required
 - same declared encoding chain used after a successful aging rewrite
-- malformed/unsupported compression fails original
+- malformed/unsupported compression on an aging-eligible Responses request fails original
+- native passthrough/compact bodies are not decoded merely for TokenSaver
 
 ## 3.5 Responses aging adapter — implemented
 
@@ -237,11 +271,11 @@ receive
   ↓
 authenticate capability
   ↓
-validate path/method/content type
+validate finite native route + method/content type
   ↓
-detect compaction bypass
+classify responses / compact / native passthrough
   ↓
-decode only when aging inspection is required
+responses only: decode if aging inspection is enabled
   ↓
 normalize Responses input
   ↓
@@ -253,7 +287,7 @@ replace only eligible output fields
   ↓
 serialize/re-encode
   ↓
-forward to fixed upstream
+forward to fixed first-party upstream
 ```
 
 Implemented guarantees:
@@ -263,6 +297,7 @@ Implemented guarantees:
 - replacement is validated against the original JSON item
 - JSON object insertion order is preserved during rewritten serialization
 - any unsafe decode/parse/replacement/serialization/re-encoding condition causes whole-request fail-original
+- native non-Responses endpoints never enter the aging parser
 
 ## 3.6 Conversation-compaction bypass — implemented
 
@@ -278,8 +313,9 @@ The original encoded request body is forwarded untouched by aging.
 With token saving disabled:
 
 - loopback may remain connected
-- aging does not parse or rewrite history
-- original encoded body is forwarded
+- ordinary Responses history is not parsed or rewritten
+- original encoded Responses body is forwarded
+- native passthrough and explicit compaction retain their own diagnostic classifications
 
 ## 3.8 Lifecycle composition — implemented
 
@@ -290,22 +326,24 @@ resolve/recover endpoint
   ↓
 bind loopback successfully
   ↓
-durably snapshot Codex config
+durably snapshot every TokenSaver-owned Codex value
   ↓
-install openai_base_url
+install openai_base_url + only-missing realtime bypasses
 ```
 
 Restart:
 
 - existing snapshot is loaded first
-- exact prior port and capability are recovered
+- exact prior port and capability are recovered from the managed `/v1` URL
 - TokenSaver attempts to bind that same endpoint
 - a fresh endpoint is not silently substituted while Codex points to the old one
 
 Disconnect:
 
-- drift is checked
-- prior value is restored or TokenSaver-owned key removed
+- every TokenSaver-owned key is drift-checked
+- prior OpenAI base URL is restored or the TokenSaver-owned key removed
+- only realtime keys TokenSaver itself installed are removed
+- pre-existing user realtime settings remain untouched
 - snapshot is removed only after successful restoration
 
 ## 3.9 Observability bridge — implemented
@@ -315,7 +353,9 @@ Transport emits only:
 - preparation outcome
 - content-free aging statistics
 
-It does not emit original tool-result text or receipt text. The application layer maps this into Phase 2 telemetry.
+Outcomes distinguish native passthrough, explicit compaction bypass, fail-original, disabled Responses, no-eligible/no-savings evaluation, and actual aging.
+
+It does not emit original tool-result text, receipt text, bearer credentials, account IDs, or capability values. The application layer maps these observations into Phase 2 telemetry.
 
 ## Authored Phase 3 test sources
 
@@ -324,27 +364,37 @@ Tests have been written for:
 - Codex config connect/disconnect round-trip
 - preservation of unrelated config
 - pre-existing base URL restoration
-- drift refusal
+- managed realtime override installation/removal
+- pre-existing realtime override preservation
+- custom `chatgpt_base_url` realtime derivation
+- OpenAI and realtime drift refusal
 - Codex-home path resolution
-- loopback-only URL enforcement
-- exact capability authentication
-- OFF byte preservation
-- compact byte preservation
+- strict `/<64-hex>/v1` loopback URL validation
+- exact capability authentication and restart recovery
+- OFF Responses byte preservation
+- native passthrough classification independent of saving toggle
+- compact byte preservation independent of saving toggle
 - ON semantic-diff invariant at adapter level
 - mixed-output preservation
 - gzip/x-gzip/deflate/Brotli/Zstandard round trips
 - unsupported compression fail-original
 - browser-origin rejection
 - header allow-listing
+- ChatGPT-vs-API upstream selection helper behavior
+- `/v1` upstream-path normalization
+- finite native route/method allow-list
 - prepare/disconnect lifecycle
 - crash/restart endpoint reuse
+- native passthrough telemetry aggregation
 
-Still requiring final live validation:
+Still requiring final executed/live validation:
 
+- compile/test/lint/format pass
 - real installed Codex smoke test
 - real streamed tool-call turn
 - live cancellation behavior
-- authoritative upstream auth/header behavior
+- live ChatGPT and API-key auth/header behavior
+- native models/search/images/memory passthrough smoke cases
 - full ON/OFF captured-request comparison
 
 **Phase 3 implementation is complete. Automated and live validation are intentionally deferred by project instruction; no test/build/lint/formatter/CI command has been run.**
