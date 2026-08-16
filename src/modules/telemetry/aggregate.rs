@@ -3,6 +3,32 @@ use serde::{Deserialize, Serialize};
 use super::model::{OptimizationEvent, OptimizationOutcome};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct ProviderCacheSummary {
+    pub(crate) usage_events: u64,
+    pub(crate) input_tokens: u64,
+    pub(crate) cached_input_tokens: u64,
+}
+
+impl ProviderCacheSummary {
+    pub(crate) fn observe(&mut self, input_tokens: u64, cached_input_tokens: u64) {
+        self.usage_events = self.usage_events.saturating_add(1);
+        self.input_tokens = self.input_tokens.saturating_add(input_tokens);
+        self.cached_input_tokens = self
+            .cached_input_tokens
+            .saturating_add(cached_input_tokens.min(input_tokens));
+    }
+
+    pub(crate) fn rate_basis_points(self) -> Option<u64> {
+        if self.input_tokens == 0 {
+            return None;
+        }
+        Some(self.cached_input_tokens.saturating_mul(10_000) / self.input_tokens)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub(crate) struct SavingsSummary {
     pub(crate) events: u64,
     pub(crate) aged_requests: u64,
@@ -16,13 +42,21 @@ pub(crate) struct SavingsSummary {
     pub(crate) tool_results_eligible: u64,
     pub(crate) tool_results_compacted: u64,
     pub(crate) largest_tool_result_bytes: u64,
+    pub(crate) protected_frontier: u64,
+    pub(crate) unsupported_output: u64,
+    pub(crate) at_or_below_threshold: u64,
+    pub(crate) unconsumed: u64,
+    pub(crate) receipt_not_smaller: u64,
     pub(crate) bytes_before: u64,
     pub(crate) bytes_after: u64,
     pub(crate) bytes_saved: u64,
     pub(crate) estimated_tokens_saved: u64,
     pub(crate) provider_input_tokens: u64,
     pub(crate) provider_cached_input_tokens: u64,
+    pub(crate) provider_output_tokens: u64,
     pub(crate) provider_usage_events: u64,
+    pub(crate) aged_cache: ProviderCacheSummary,
+    pub(crate) unaged_cache: ProviderCacheSummary,
 }
 
 impl SavingsSummary {
@@ -64,6 +98,19 @@ impl SavingsSummary {
         self.largest_tool_result_bytes = self
             .largest_tool_result_bytes
             .max(metrics.largest_tool_result_bytes);
+        self.protected_frontier = self
+            .protected_frontier
+            .saturating_add(metrics.protected_frontier);
+        self.unsupported_output = self
+            .unsupported_output
+            .saturating_add(metrics.unsupported_output);
+        self.at_or_below_threshold = self
+            .at_or_below_threshold
+            .saturating_add(metrics.at_or_below_threshold);
+        self.unconsumed = self.unconsumed.saturating_add(metrics.unconsumed);
+        self.receipt_not_smaller = self
+            .receipt_not_smaller
+            .saturating_add(metrics.receipt_not_smaller);
         self.bytes_before = self.bytes_before.saturating_add(metrics.bytes_before);
         self.bytes_after = self.bytes_after.saturating_add(metrics.bytes_after);
         self.bytes_saved = self.bytes_saved.saturating_add(metrics.bytes_saved);
@@ -78,11 +125,26 @@ impl SavingsSummary {
                 .saturating_add(usage.input_tokens);
             self.provider_cached_input_tokens = self
                 .provider_cached_input_tokens
-                .saturating_add(usage.cached_input_tokens);
+                .saturating_add(usage.cached_input_tokens.min(usage.input_tokens));
+            self.provider_output_tokens = self
+                .provider_output_tokens
+                .saturating_add(usage.output_tokens);
+
+            match event.outcome {
+                OptimizationOutcome::Aged => self
+                    .aged_cache
+                    .observe(usage.input_tokens, usage.cached_input_tokens),
+                OptimizationOutcome::Disabled
+                | OptimizationOutcome::FailOriginal
+                | OptimizationOutcome::EvaluatedNoEligibleResult
+                | OptimizationOutcome::EvaluatedNoSavings => self
+                    .unaged_cache
+                    .observe(usage.input_tokens, usage.cached_input_tokens),
+                OptimizationOutcome::Bypassed | OptimizationOutcome::NativePassthrough => {}
+            }
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn cache_rate_basis_points(self) -> Option<u64> {
         if self.provider_input_tokens == 0 {
             return None;
