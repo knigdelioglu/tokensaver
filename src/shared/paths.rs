@@ -1,3 +1,4 @@
+use std::fs;
 use std::io;
 use std::path::PathBuf;
 
@@ -15,6 +16,21 @@ pub(crate) fn product_data_dir() -> io::Result<PathBuf> {
         )
     })?;
     Ok(root.join(APP_IDENTIFIER))
+}
+
+/// Create the TokenSaver state root and ensure it is owner-private on Unix.
+/// Individual sensitive files are still written through `atomic_write_private`.
+pub(crate) fn ensure_product_data_dir() -> io::Result<PathBuf> {
+    let path = product_data_dir()?;
+    fs::create_dir_all(&path)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
+    }
+
+    Ok(path)
 }
 
 pub(crate) fn control_socket_path() -> io::Result<PathBuf> {
