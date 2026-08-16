@@ -13,6 +13,7 @@ use crate::application::desktop_runtime::{
     DesktopCodexState, DesktopRuntimeController, DesktopRuntimeSnapshot, DesktopServiceState,
     LastOptimizationView, SavingsView,
 };
+use crate::shared::security::redact_local_secrets;
 
 const MENU_SAVING: &str = "saving-toggle";
 const MENU_CONNECT: &str = "connect-toggle";
@@ -428,7 +429,7 @@ fn set_shell_error(target: &Arc<RwLock<Option<String>>>, value: Option<String>) 
     let mut slot = target
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    *slot = value;
+    *slot = value.map(|message| redact_local_secrets(&message));
 }
 
 fn service_text(state: DesktopServiceState) -> &'static str {
@@ -524,7 +525,8 @@ fn format_bytes(bytes: u64) -> String {
 }
 
 fn truncate_single_line(value: &str, max_chars: usize) -> String {
-    let flattened = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let redacted = redact_local_secrets(value);
+    let flattened = redacted.split_whitespace().collect::<Vec<_>>().join(" ");
     if flattened.chars().count() <= max_chars {
         return flattened;
     }
