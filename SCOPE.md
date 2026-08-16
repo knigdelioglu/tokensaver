@@ -6,166 +6,174 @@ TokenSaver exists to reduce repeated input-token consumption in coding-agent con
 
 The product boundary is intentionally strict:
 
-> TokenSaver optimizes context. It does not choose models, route providers, manage accounts, or orchestrate agents.
+> **TokenSaver optimizes context. It does not choose models, route providers, manage accounts, or orchestrate agents.**
 
 ## Architecture rule — modular monolith
 
 TokenSaver is implemented as a **modular monolith**.
 
-The application may run as one local product/runtime, but its internal modules must have explicit ownership and dependency boundaries. Modules communicate through public application interfaces; one module must not reach into another module's internal state, persistence implementation, or private types.
+The application may run as one local product/runtime, but internal modules have explicit ownership and dependency boundaries. A module must not reach into another module's private state, persistence implementation, or internal types.
 
-The initial module boundaries are:
+Module boundaries:
 
-- **aging** — deterministic tool-result eligibility and receipt generation
-- **transport** — Codex request/response transport, compression, streaming, and cancellation
-- **codex integration** — Codex configuration connect/disconnect and restoration
-- **telemetry** — savings events, aggregation, and statistics
-- **runtime** — lifecycle, local state, startup, and service supervision
-- **diagnostics** — health checks and doctor/status reporting
-- **desktop/tray** — user-facing control and observability
+- **aging** — deterministic eligibility, receipts, receipt evidence/identity
+- **transport** — Codex request/response transport, compression, streaming, request activity
+- **codex integration** — reversible Codex configuration and drift/restoration state
+- **telemetry** — content-free savings events, aggregation, numeric persistence
+- **runtime** — process/service state and user runtime preferences
+- **diagnostics** — health/doctor reporting
+- **desktop/tray** — native menu-bar presentation and controls
+- **application** — cross-module use-case composition
 
-The most important dependency rule is:
+Strongest dependency rule:
 
-> **The aging domain must remain transport-, Codex-, persistence-, and UI-agnostic.**
+> **The aging domain must remain transport-, Codex-, persistence-, telemetry-, and UI-agnostic.**
 
 Conceptually:
 
 ```text
-Codex transport
+desktop / CLI
       ↓
-application boundary
+application services
       ↓
-aging engine
-      ↓
-AgingResult
-      ↓
-transport forwards request
+ ┌────┼──────────────┐
+ ↓    ↓              ↓
+runtime telemetry  codex integration
+                     ↓
+                  transport
+                     ↓
+                   aging
 ```
 
-The aging module should expose a narrow contract equivalent in spirit to:
-
-```text
-ageToolResults(input, policy) -> AgingResult
-```
-
-It must not know whether the caller is Codex, a tray application, a CLI, or another future Responses-compatible client.
-
-Allowed dependency direction should remain roughly:
-
-```text
-desktop/tray ─┐
-CLI/doctor ───┼─> application services
-              │
-              ├─> runtime
-              ├─> codex integration
-              ├─> telemetry
-              └─> transport ─> aging
-```
-
-Forbidden examples include:
+Forbidden examples:
 
 - `aging -> tray`
 - `aging -> Codex configuration`
 - `aging -> telemetry storage`
 - `telemetry -> transport internals`
 - `codex integration -> aging internals`
-- UI code reading module persistence directly
+- desktop UI reading module persistence directly
 
-Cross-module behavior must go through explicit interfaces/application services. Shared code must stay small and contain only genuinely cross-cutting low-level concerns such as common errors, filesystem safety, or security primitives; `shared` must not become a dumping ground for domain logic.
+`shared` may contain only genuinely cross-cutting low-level primitives such as filesystem safety and secret redaction. It must not become a domain dumping ground.
 
-Physical process separation is not required. The first implementation may run tray, local transport, aging, telemetry, runtime, and configuration management in one process. If lifecycle or platform requirements later justify splitting a process, the module contracts should allow that without redesigning the domain.
-
-Architecture changes that break these boundaries require an explicit documented decision rather than an incidental implementation shortcut.
+Physical process separation is not required. The MVP may run tray, transport, aging, telemetry, runtime, and configuration management in one process.
 
 ## In scope
 
 ### 1. Tool-result aging
 
-TokenSaver may identify historical tool outputs that meet a conservative eligibility policy and replace only the model-visible historical copy with a smaller deterministic receipt.
+TokenSaver may replace only the model-visible historical copy of a tool result when a conservative policy proves it eligible.
 
-The initial eligible class is:
+Initial eligible class:
 
 - textual tool output
 - larger than the configured minimum byte threshold
-- already followed by evidence that the model acted after receiving it
+- followed by evidence that the model acted after receiving it
 - outside the protected newest-result frontier
 - safely representable as deterministic text
 
-### 2. Deterministic receipts
+### 2. Deterministic receipts and evidence
 
-A compacted result may retain bounded evidence needed to identify and reason about the omitted result, including:
+A compacted result may retain bounded evidence including:
 
-- original byte size
+- original UTF-8 byte length
 - SHA-256 digest
 - bounded beginning preview
 - bounded ending preview
 - explicit omitted-middle marker
-- structural call/result identifiers required by the protocol
+- machine-readable receipt version/preview lengths
+- structural call/result identifiers required by protocol
 
-The same source result under the same policy should produce the same receipt.
+Receipt evidence may be parsed and an externally recovered exact candidate may be verified against byte length + digest.
+
+TokenSaver must not reconstruct omitted bytes from guesses.
 
 ### 3. Hot/cold context policy
 
-TokenSaver may distinguish recent tool results from older tool results.
+Recent tool results remain exact. Older results become eligible only after all other safety checks pass.
 
-Recent results remain exact. Older results become eligible only after all other safety checks pass.
-
-The initial default frontier is the newest four tool results.
+Initial default frontier: newest **4** tool results.
 
 ### 4. Configurable optimization policy
 
-TokenSaver may expose settings directly related to context optimization, such as:
+TokenSaver may expose settings directly related to context optimization:
 
 - minimum eligible byte size
 - protected frontier size
 - preview size
 - optimization enabled/disabled state
 
-Defaults must be conservative.
+Defaults must remain conservative.
 
-### 5. Transparent request integration
+### 5. Transparent native request integration
 
-TokenSaver may provide the minimum local transport/proxy layer needed to receive a coding-agent request, optimize eligible historical tool results, and forward the request to the same intended upstream.
+TokenSaver may provide the minimum local transport needed to receive supported Codex traffic, optimize ordinary Responses history, and forward requests to the same first-party upstream family.
 
-This layer must not become a general model router.
+This layer must not become a general model router or arbitrary forward proxy.
 
-### 6. Savings telemetry
+### 6. Native passthrough compatibility
 
-TokenSaver may record non-content optimization metrics, including:
+TokenSaver may transparently relay native provider endpoints required for supported Codex operation when those endpoints share the overridden provider base URL.
+
+Native passthrough payloads are not aging targets.
+
+### 7. Savings telemetry
+
+TokenSaver may record non-content metrics:
 
 - requests evaluated
-- tool results evaluated
-- tool results compacted
-- largest evaluated result
-- bytes before
-- bytes after
-- bytes saved
+- tool results evaluated/eligible/compacted
+- largest result
+- bytes before/after/saved
 - estimated tokens saved
-- provider-reported token/cache metrics when naturally available on the proxied request path
+- provider-reported token/cache metrics when naturally available
+- session/day/all-time numeric aggregates
+- latest optimization numeric metadata
 
-Telemetry must not persist original tool-result bodies by default.
+Telemetry must not persist original tool-result bodies or receipt bodies.
 
-### 7. Offline measurement
+### 8. Offline measurement and quality fixtures
 
-TokenSaver may include benchmark and fixture tooling that evaluates the aging policy without requiring paid provider calls.
+TokenSaver may include deterministic fixtures for aging behavior, byte savings, receipt evidence boundaries, and exact-candidate identity verification without paid provider calls.
 
-### 8. Safety and regression testing
+### 9. Safety and regression testing
 
-Tests for preservation, eligibility, Unicode safety, deterministic hashing, pass-through behavior, protocol structure, and module-boundary enforcement are part of the core product.
+Tests for preservation, eligibility, Unicode safety, hashing, pass-through behavior, protocol structure, recovery evidence, configuration restoration, lifecycle, and module-boundary enforcement are part of the product.
 
-### 9. Minimal tray/menu-bar control surface
+### 10. Minimal macOS tray/menu-bar control surface
 
-The supported desktop build may provide a small tray/menu-bar application for TokenSaver-specific operation and observability, including connection state, token-saving state, measured byte savings, estimated token savings, recent compaction activity, start-at-login, diagnostics, and reversible Codex connect/disconnect controls.
+The supported desktop build may provide a small TokenSaver-specific surface for:
+
+- service/connection health
+- request active/idle state
+- saving on/off
+- measured byte savings
+- estimated token savings
+- recent optimization activity
+- Connect / Disconnect
+- Start at Login
+- safe Quit
+- later diagnostics/doctor entry points
 
 The tray is not a model/provider management surface.
 
+### 11. Safe local lifecycle state
+
+TokenSaver may persist bounded owner-local operational state required for correct lifecycle:
+
+- reversible Codex config snapshot
+- runtime preferences such as saving state / reconnect-on-launch intent
+- numeric content-free savings aggregates
+
+Normal process exit may be delayed/refused when immediate exit would knowingly strand Codex on a dead TokenSaver endpoint or interrupt an active Codex request.
+
 ## Required invariants
 
-These rules are stronger than convenience or token savings and must not be bypassed silently.
+These rules are stronger than convenience or token savings.
 
 ### INV-1 — Unconsumed results remain exact
 
-If the model has not yet acted after a tool result, TokenSaver must not compact it.
+If the model has not acted after a tool result, TokenSaver must not compact it.
 
 ### INV-2 — Protected recent results remain exact
 
@@ -173,70 +181,90 @@ Tool results inside the configured hot frontier must not be compacted.
 
 ### INV-3 — Unsupported output types remain exact
 
-Image-bearing, mixed-media, binary, malformed, or otherwise ambiguous outputs must pass through unchanged unless a future format has its own explicitly safe policy.
+Image-bearing, mixed-media, binary, malformed, or ambiguous outputs remain exact unless a future format receives its own explicitly safe policy.
 
 ### INV-4 — Small results remain exact
 
-Results at or below the configured minimum threshold must pass through unchanged.
+Results at or below the minimum threshold remain exact.
 
 ### INV-5 — Never expand context
 
-If the compact receipt is not smaller than the original result, keep the original.
+If a receipt is not smaller than its source, keep the source.
 
 ### INV-6 — Stable identity
 
-A compacted result must retain a deterministic identity derived from the exact original content, initially SHA-256 plus original byte length.
+A compacted result retains deterministic exact-content identity, initially SHA-256 + original UTF-8 byte length.
 
 ### INV-7 — Preserve protocol structure
 
-Compaction must preserve call/result pairing and all structural fields required by the client/upstream protocol.
+Compaction preserves call/result pairing and structural fields required by client/upstream protocols.
 
 ### INV-8 — Fail original
 
-If classification, transformation, or validation is uncertain or fails, TokenSaver must prefer the original request content over an invented or partial representation.
+If classification, transformation, or validation is uncertain or fails, TokenSaver prefers original request content over an invented/partial representation.
 
-### INV-9 — Hard off means pass-through
+### INV-9 — Hard off means no aging rewrite
 
-There must be a reliable mode in which TokenSaver performs no context rewriting.
+There is a reliable mode in which TokenSaver performs no context rewriting.
 
 ### INV-10 — No original content in routine telemetry
 
-Savings logs and metrics must not contain full original tool-result bodies.
+Savings state/logs must not contain full original tool-result bodies or receipt bodies.
 
 ### INV-11 — Module boundaries are enforced
 
-A module must not depend on another module's private implementation, storage, or state. Cross-module behavior must use explicit public interfaces/application services. In particular, the aging domain must never acquire a dependency on Codex transport/configuration, tray/UI, or telemetry persistence.
+Cross-module behavior uses explicit application services/interfaces. The aging domain never acquires dependencies on Codex transport/configuration, UI, or telemetry persistence.
+
+### INV-12 — Native conversation compaction sees original history
+
+Explicit supported conversation-compaction requests bypass TokenSaver aging so native compaction is not summarizing TokenSaver receipts instead of the original history.
+
+### INV-13 — Omitted content is never fabricated
+
+Receipt head/tail evidence may be used as shown, but omitted middle bytes must never be reconstructed or presented as exact without source identity verification.
+
+### INV-14 — Native passthrough is not an optimization surface
+
+Verified native models/search/images/memory endpoints may pass through the local transport but do not enter the tool-result aging parser.
+
+### INV-15 — Safe desktop detach
+
+Normal Disconnect/Quit must not intentionally leave Codex configured to a TokenSaver endpoint that is no longer serving. Active request streams must not be cut merely for menu convenience.
+
+### INV-16 — Capability secrets stay local
+
+The caller capability must not enter routine telemetry or outward status text. Owner-only config/snapshot storage may contain it only because local routing/recovery requires it.
+
+### INV-17 — UI state is not backend truth
+
+Tray toggle/checkmark state must be derived from application/runtime evidence. It must not substitute for actual Codex config state, transport state, OS autostart state, or measured telemetry.
 
 ## Out of scope
 
-The following features are explicitly outside TokenSaver's product mission unless the scope is intentionally revised in a future documented decision.
-
-### Model and provider routing
+### Model/provider routing
 
 Out of scope:
 
-- choosing a different model
-- model aliases
-- model catalogs
+- choosing different models/providers
+- aliases/catalogs
 - provider failover
-- provider selection
-- gateway-model translation
+- protocol translation as a product feature
 - API-provider registries
 
-TokenSaver forwards to the user's already intended upstream.
+TokenSaver forwards to the already intended first-party upstream path.
 
-### Credential and subscription management
+### Credential/subscription management
 
 Out of scope:
 
-- storing provider API keys as a product feature
-- OAuth login systems
+- provider API-key storage as a product feature
+- OAuth/account systems
 - ChatGPT account/session discovery
 - subscription switching
 - quota/reset management
-- billing dashboards unrelated to measured token savings
+- unrelated billing dashboards
 
-If a transport requires authentication headers, TokenSaver may relay them without becoming their owner.
+Transport may relay authentication headers without owning credentials.
 
 ### Multi-agent orchestration
 
@@ -250,16 +278,13 @@ Out of scope:
 
 ### General context rewriting
 
-Out of scope for the initial product:
+Out of scope:
 
-- arbitrary removal of user or assistant messages
-- rewriting system prompts
-- rewriting user prompts
-- rewriting assistant reasoning
-- LLM-generated summaries of the conversation
+- arbitrary removal of messages
+- system/user prompt rewriting
+- assistant reasoning rewriting
+- LLM-generated whole-conversation summaries
 - semantic compression of arbitrary prose
-
-TokenSaver starts with tool-result aging because it has a narrow, auditable eligibility boundary.
 
 ### General-purpose response transformation
 
@@ -267,72 +292,75 @@ Out of scope:
 
 - modifying model answers
 - changing tool-call arguments
-- repairing arbitrary upstream schemas
-- converting one provider protocol to another as a product feature
+- arbitrary upstream schema repair
+- provider-protocol conversion
 - response quality enhancement unrelated to context reduction
 
-Minimal protocol adaptation is acceptable only when strictly required to preserve the same request semantics while applying TokenSaver.
-
-### Vision and media processing
+### Vision/media processing
 
 Out of scope:
 
 - OCR
 - image understanding
-- vision-model bridges
-- image compression for model reasoning
+- vision bridges
+- image compression for reasoning
 
-Mixed/image-bearing tool results pass through unchanged in the initial implementation.
+Mixed/image-bearing tool results remain exact.
 
-### Generic observability platform
+### Persistent exact-result vault in MVP
+
+MVP does not keep a second persistent store of complete shell output, file reads, search output, or diffs solely for recovery.
+
+A future bounded owner-local cache requires a separate privacy/architecture decision.
+
+### Generic observability/dashboard platform
 
 Out of scope:
 
-- full provider analytics
 - model speed leaderboards
-- unrelated latency dashboards
+- provider analytics unrelated to TokenSaver
 - quota dashboards
-- tray status unrelated to TokenSaver operation or optimization
-
-TokenSaver observability should answer: is TokenSaver connected, what was evaluated, what was compacted, why, and how much context was saved?
+- large management dashboards
+- tray state unrelated to TokenSaver operation
 
 ### Tool execution platform
 
-TokenSaver does not execute arbitrary coding tools on behalf of the agent merely to become a general tool host.
-
-Any future exact-result recovery mechanism must remain narrowly tied to safely recovering content omitted by TokenSaver.
+TokenSaver does not become a general coding-tool host. Any future exact-result recovery execution must remain narrowly tied to safely recovering content omitted by TokenSaver.
 
 ## MVP definition
 
-The MVP is complete when TokenSaver can do all of the following:
+The MVP is complete when TokenSaver can:
 
-1. Accept real supported Codex request/history traffic through its local transport.
+1. Accept real supported Codex traffic through local transport.
 2. Detect eligible historical textual tool results.
-3. Compact them using a deterministic receipt.
-4. Preserve ineligible and recent results exactly.
-5. Forward the optimized request to the same intended native upstream path.
-6. Run in a hard pass-through mode.
-7. Report byte and estimated-token savings without logging original result bodies.
-8. Preserve Codex's existing model selection, account flow, MCP tools, skills, subagents, permissions, and task state.
-9. Safely connect/disconnect Codex configuration and restore TokenSaver-owned changes.
-10. Provide a minimal macOS tray/menu-bar surface showing real connection and savings state.
-11. Pass automated tests for every required invariant above, including module-boundary rules.
+3. Compact them with deterministic verifiable receipts.
+4. Preserve ineligible/recent results exactly.
+5. Forward ordinary/native traffic to the same intended first-party path.
+6. Run hard pass-through for aging.
+7. Bypass explicit native conversation compaction.
+8. Report measured byte + estimated-token savings without persisting result content.
+9. Preserve Codex model/account/MCP/skills/subagents/permissions/task state.
+10. Safely connect/disconnect and restore TokenSaver-owned Codex configuration.
+11. Provide a minimal macOS tray showing backend-derived connection/request/savings state.
+12. Persist saving/reconnect intent and bounded numeric savings state.
+13. Safely detach on normal Quit without cutting active request streams.
+14. Pass automated and live validation for all required invariants.
 
-The MVP does **not** require a provider catalog, model selector, external-model routing, multi-agent orchestration, or account-management system.
+The MVP does **not** require a provider catalog, model selector, external-model routing, multi-agent orchestration, account-management system, or full dashboard.
 
 ## Scope-change rule
 
-Before adding a substantial feature, evaluate it against this test:
+Before adding a substantial feature, evaluate it against:
 
-1. Does it directly reduce repeated context/token usage, improve the correctness of that reduction, measure it, or safely integrate it?
+1. Does it directly reduce repeated context/token usage, improve correctness/recovery/measurement, or safely operate that mechanism?
 2. Can it be implemented without turning TokenSaver into a general router or agent platform?
-3. Does it preserve the fail-original and pass-through guarantees?
-4. Does it preserve the modular-monolith dependency boundaries, or is an explicit architecture decision required first?
+3. Does it preserve fail-original/pass-through/recovery truthfulness?
+4. Does it preserve modular-monolith boundaries, or is an explicit architecture decision required?
 
-If the answer to any of these is no, the feature should be rejected or moved to a separate project.
+If any answer is no, reject the feature or move it to a separate project.
 
 ## Upstream relationship
 
-TokenSaver is inspired by the tool-result-aging work in `duolahypercho/codex-router`, but Codex Router has a much broader mission. TokenSaver should study relevant upstream improvements while selectively adopting only mechanisms that fit this scope.
+TokenSaver is inspired by tool-result-aging work in `duolahypercho/codex-router`, but Codex Router has a broader mission. TokenSaver studies relevant upstream improvements and selectively adopts only mechanisms that fit this scope.
 
-Upstream changes related to routing, provider support, account/session management, broad management UI, harness integrations, model catalogs, vision, or multi-agent behavior are not automatically relevant to TokenSaver.
+Routing, provider support, account/session management, broad management UI, harness integrations, model catalogs, vision, and multi-agent behavior are not automatically relevant to TokenSaver.
