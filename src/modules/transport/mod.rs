@@ -16,7 +16,6 @@ mod server;
 pub(crate) use capability::CallerCapability;
 pub(crate) use observation::TransportObservation;
 pub(crate) use request::{PreparationOutcome, RequestDiagnostics};
-pub(crate) use response_usage::ProviderUsageObservation;
 pub(crate) use server::{BoundTransport, TransportControl, TransportError, TransportSettings};
 
 #[cfg(test)]
