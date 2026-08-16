@@ -6,6 +6,7 @@ pub(crate) struct SavingsSummary {
     pub(crate) aged_requests: u64,
     pub(crate) disabled_requests: u64,
     pub(crate) bypassed_requests: u64,
+    pub(crate) native_passthrough_requests: u64,
     pub(crate) fail_original_requests: u64,
     pub(crate) no_eligible_requests: u64,
     pub(crate) no_savings_requests: u64,
@@ -31,6 +32,10 @@ impl SavingsSummary {
             }
             OptimizationOutcome::Bypassed => {
                 self.bypassed_requests = self.bypassed_requests.saturating_add(1)
+            }
+            OptimizationOutcome::NativePassthrough => {
+                self.native_passthrough_requests =
+                    self.native_passthrough_requests.saturating_add(1)
             }
             OptimizationOutcome::FailOriginal => {
                 self.fail_original_requests = self.fail_original_requests.saturating_add(1)
