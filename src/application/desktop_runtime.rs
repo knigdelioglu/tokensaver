@@ -10,6 +10,7 @@ use rand::rngs::OsRng;
 use rand::RngCore;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use tokio::time::{timeout, Duration};
 
 use crate::modules::aging::AgingPolicy;
 use crate::modules::codex_integration::{
@@ -33,6 +34,7 @@ use super::measurement::event_from_transport_observation;
 const SNAPSHOT_FILE: &str = "codex-config-snapshot.json";
 const SAVINGS_FILE: &str = "savings.json";
 const PREFERENCES_FILE: &str = "runtime-preferences.json";
+const OBSERVATION_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DesktopServiceState {
@@ -193,7 +195,8 @@ impl DesktopRuntimeController {
     }
 
     pub(crate) async fn initialize(&self) {
-        if self.snapshot_path.exists() {
+        let connect_on_launch = self.preferences.lock().await.preferences().connect_on_launch;
+        if self.snapshot_path.exists() || connect_on_launch {
             if let Err(error) = self.connect().await {
                 self.status.update(|runtime| {
                     runtime.service = ServiceStatus::Running;
@@ -217,6 +220,10 @@ impl DesktopRuntimeController {
             return Ok(());
         }
 
+        self.preferences
+            .lock()
+            .await
+            .set_connect_on_launch(true)?;
         self.status.update(|runtime| {
             runtime.service = ServiceStatus::Starting;
             runtime.codex = CodexStatus::Connecting;
@@ -298,7 +305,16 @@ impl DesktopRuntimeController {
         Ok(())
     }
 
+    /// Explicit user disconnect. Unlike safe app shutdown, this clears the
+    /// persistent desire to reconnect on the next launch.
     pub(crate) async fn disconnect(&self) -> Result<(), DesktopRuntimeError> {
+        self.disconnect_internal(true).await
+    }
+
+    async fn disconnect_internal(
+        &self,
+        clear_connect_preference: bool,
+    ) -> Result<(), DesktopRuntimeError> {
         let _operation = self.operation.lock().await;
         let active = {
             let inner = self.inner.lock().await;
@@ -309,6 +325,12 @@ impl DesktopRuntimeController {
         };
 
         let Some((record, control)) = active else {
+            if clear_connect_preference {
+                self.preferences
+                    .lock()
+                    .await
+                    .set_connect_on_launch(false)?;
+            }
             self.status.update(|runtime| {
                 runtime.service = ServiceStatus::Running;
                 runtime.codex = CodexStatus::Disconnected;
@@ -336,8 +358,27 @@ impl DesktopRuntimeController {
         }
 
         if let Some(active) = self.inner.lock().await.connection.take() {
-            active.server_task.abort();
-            active.observation_task.abort();
+            let ActiveConnection {
+                server_task,
+                mut observation_task,
+                ..
+            } = active;
+            server_task.abort();
+            let _ = server_task.await;
+            if timeout(OBSERVATION_DRAIN_TIMEOUT, &mut observation_task)
+                .await
+                .is_err()
+            {
+                observation_task.abort();
+                let _ = observation_task.await;
+            }
+        }
+
+        if clear_connect_preference {
+            self.preferences
+                .lock()
+                .await
+                .set_connect_on_launch(false)?;
         }
         self.status.update(|runtime| {
             runtime.service = ServiceStatus::Running;
@@ -397,11 +438,13 @@ impl DesktopRuntimeController {
         self.status.update(|runtime| {
             runtime.active_requests = control.active_requests();
             match connection_state {
+                Ok(CodexConnectionState::Connected) if runtime.service == ServiceStatus::Error => {
+                    runtime.codex = CodexStatus::Error;
+                }
                 Ok(CodexConnectionState::Connected) => {
-                    if runtime.service != ServiceStatus::Error {
-                        runtime.service = ServiceStatus::Running;
-                    }
+                    runtime.service = ServiceStatus::Running;
                     runtime.codex = CodexStatus::Connected;
+                    runtime.last_error = None;
                 }
                 Ok(CodexConnectionState::Drifted) => {
                     runtime.codex = CodexStatus::Drifted;
@@ -449,10 +492,12 @@ impl DesktopRuntimeController {
         Ok(())
     }
 
+    /// Restore temporary Codex config and flush telemetry without clearing the
+    /// user's desire to reconnect when TokenSaver launches again.
     pub(crate) async fn safe_shutdown(&self) -> Result<(), DesktopRuntimeError> {
         let connected = self.inner.lock().await.connection.is_some();
         if connected {
-            self.disconnect().await?;
+            self.disconnect_internal(false).await?;
         } else {
             self.flush_persistent().await?;
         }
