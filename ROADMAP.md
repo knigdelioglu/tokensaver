@@ -34,6 +34,8 @@ TokenSaver succeeds when:
 8. disconnect/uninstall restores TokenSaver-owned Codex configuration safely
 9. TokenSaver never becomes a provider/model router
 10. modular-monolith boundaries remain enforced
+11. resource saturation remains bounded and visible
+12. release packaging fails closed without exact validation evidence
 
 Core invariant:
 
@@ -479,13 +481,14 @@ Guardrails:
 
 `tokensaver doctor` emits redacted PASS/WARN/FAIL checks for:
 
-- Codex CLI discovery/version when available
+- Codex CLI discovery/version and explicit validation identity
 - TokenSaver application-data privacy
 - runtime-preference privacy
 - savings-store privacy
 - restoration snapshot privacy and snapshot/config coherence
 - Codex config resolution/readability
 - live TokenSaver runtime/control-channel reachability
+- dropped telemetry observation warning
 - first-party ChatGPT Codex host reachability
 - first-party OpenAI API host reachability
 
@@ -541,9 +544,10 @@ Implemented:
 - release-only icon overlay (`tauri.release.conf.json`)
 - single SVG icon source (`assets/app-icon.svg`)
 - generated `icons/` excluded from source control
-- packaging helper `scripts/package-macos.sh`
+- development packaging helper `scripts/package-macos.sh`
+- release entrypoint `scripts/release-macos.sh`, which is gated by Phase 8 validation evidence
 
-The packaging script generates the platform icon set first, then builds `.app` + `.dmg` with the release overlay. It does not run project validation suites.
+The development packaging script generates the platform icon set first, then builds `.app` + `.dmg` with the release overlay. It does not run project validation suites.
 
 ## 7.2 Signing/notarization boundary — implemented
 
@@ -628,40 +632,109 @@ Still requiring the user's final validation pass:
 
 # Phase 8 — Hardening and release gates
 
-**Status: NOT STARTED**
+**Status: IMPLEMENTED — VALIDATION DEFERRED**
 
-Reliability gates:
+Authoritative document: `docs/HARDENING.md`.
 
-- malformed requests
-- huge outputs/bodies
-- memory pressure
-- concurrency
-- interrupted streams
-- TokenSaver/Codex restart
-- machine reboot/start-at-login
-- forced termination / power-loss recovery
+Goal: bound failure/resource surfaces, make compatibility drift visible, prevent telemetry from becoming an inference dependency, and ensure the project release path cannot claim validation that was never executed.
 
-Security/privacy gates:
+## 8.1 Native transport resource bounds — implemented
 
-- loopback-only
-- strict local capability
-- no browser/CORS proxy surface
-- owner-only sensitive state
-- no credentials/capability in logs or UI
-- no original result bodies in routine telemetry
-- bounded logs/state
-- safe temporary files
+Implemented:
 
-Performance/compatibility gates:
+- encoded request body maximum: **64 MiB**
+- decoded inspection maximum: **256 MiB**
+- `Content-Length` oversize rejection before body collection
+- native concurrent request maximum: **16**
+- saturation returns `429 Too Many Requests`
+- upstream connect timeout: **15 seconds**
+- TCP keepalive
+- no total response-stream timeout
+- active request slot held until downstream response EOF/drop
 
-- optimizer overhead materially below saved context cost
-- bounded copies of huge results
-- compression/serialization benchmark
-- lightweight tray refresh
-- explicit supported Codex baseline
-- unsupported builds detected rather than guessed
+This keeps legitimate long Codex streams possible while preventing unbounded body/concurrency growth.
 
-Final release gates:
+## 8.2 Bounded telemetry and truthful savings — implemented
+
+Implemented:
+
+- content-free observation channel capacity: **1024**
+- non-blocking `try_send`
+- queue saturation never blocks inference
+- dropped observation counter in transport/runtime/control health
+- doctor warning when observations were dropped
+- savings observation emitted only after upstream `.send()` succeeds far enough to return response headers
+
+Therefore an upstream connection failure cannot inflate the savings counters. A saturated telemetry consumer may make statistics incomplete, but that degradation is visible.
+
+## 8.3 Owner-local control hardening — implemented
+
+Implemented:
+
+- maximum control message/response: **64 KiB**
+- maximum simultaneous control clients: **16**
+- connect/read/write timeout: **5 seconds**
+- excess clients dropped rather than unbounded task spawning
+- existing `0700` parent / `0600` socket permissions retained
+- finite command protocol retained
+
+## 8.4 Source-level outward redaction — implemented
+
+`CodexConfigError::Display` no longer exposes:
+
+- capability-bearing loopback URLs
+- active installed/requested TokenSaver endpoints
+- drift expected/actual private values
+- malformed TOML parser context
+- malformed restoration-snapshot parser context
+
+The real values remain internal where comparison/restoration requires them. Redaction test sources assert that formatted errors do not contain the secrets.
+
+## 8.5 Codex compatibility drift — implemented
+
+Protocol baseline remains:
+
+```text
+openai/codex@9ded177ce7c1c0bd2047f902936c177612ab3434
+```
+
+That commit's Rust workspace reports version `0.0.0`, so TokenSaver does not invent a semantic-version compatibility range.
+
+Doctor instead uses exact `codex --version` output as a release-validation identity:
+
+- exact identity explicitly present in the validated source allow-list → PASS
+- detected but not explicitly validated → WARN
+- unavailable/empty version identity → WARN
+
+The allow-list is intentionally empty until the user's final executed validation pass proves a specific installed Codex build.
+
+## 8.6 Fail-closed release packaging — implemented
+
+Development packaging remains:
+
+```bash
+bash scripts/package-macos.sh
+```
+
+A project release must use:
+
+```bash
+bash scripts/release-macos.sh
+```
+
+The release entrypoint first runs `scripts/verify-release-gates.py`. It refuses packaging unless local `validation/release-manifest.json` matches:
+
+- the exact current Git commit
+- the current TokenSaver Cargo version
+- the pinned Codex baseline commit
+- the exact currently installed `codex --version` identity used for validation
+- every required release gate
+
+Completed validation evidence is local/gitignored. The repository contains only `validation/release-manifest.example.json`, with every gate false. The verifier validates evidence; it does not execute tests or manufacture PASS results.
+
+## 8.7 Authoritative final release gates
+
+Exactly **15** gates are required by the verifier:
 
 1. deterministic aging suite
 2. architecture-contract suite
@@ -671,14 +744,35 @@ Final release gates:
 6. config restoration/drift suite
 7. desktop runtime/tray suite
 8. CLI/doctor suite
-9. packaging/update/uninstall suite
-10. real Codex smoke test
-11. compaction-bypass test
-12. ON/OFF payload-diff invariant
-13. tray/backend state consistency
-14. privacy/log/UI/CLI redaction
-15. install/uninstall round trip
-16. realistic long-session savings + quality benchmark
+9. real Codex smoke test
+10. compaction-bypass test
+11. ON/OFF payload-diff invariant
+12. tray/backend state consistency
+13. privacy/log/UI/CLI redaction review
+14. install/uninstall round trip
+15. realistic long-session savings + quality benchmark
+
+## Phase 8 deferred validation
+
+Still requiring the user's final executed pass:
+
+- compile/test/lint/format
+- malformed/oversized/compressed-body integration cases
+- concurrency saturation and recovery
+- interrupted stream lifecycle
+- control-client saturation/timeouts
+- telemetry queue saturation and dropped-counter visibility
+- upstream connection failure not counted as savings
+- crash/restart and power-loss recovery
+- Codex exact-version warning/allow-list behavior
+- real Codex smoke and ON/OFF semantic payload diff
+- real task quality/recovery comparison
+- memory/latency/compression/serialization benchmarks
+- install/uninstall round trip
+- release-manifest negative and positive cases
+- signed/notarized packaging when real credentials are available
+
+**No tests, builds, cargo checks, linters, formatters, benchmarks, CI, live Codex runs, packaging, release verification, signing, or notarization commands have been executed.**
 
 ---
 
