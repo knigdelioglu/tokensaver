@@ -12,6 +12,16 @@ const SAVINGS_FILE: &str = "savings.json";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct StoredSavingsView {
+    pub(crate) requests_observed: u64,
+    pub(crate) responses_requests: u64,
+    pub(crate) compaction_bypass_requests: u64,
+    pub(crate) native_passthrough_requests: u64,
+    pub(crate) disabled_requests: u64,
+    pub(crate) fail_original_requests: u64,
+    pub(crate) no_eligible_requests: u64,
+    pub(crate) no_savings_requests: u64,
+    pub(crate) tool_results_evaluated: u64,
+    pub(crate) tool_results_eligible: u64,
     pub(crate) bytes_saved: u64,
     pub(crate) estimated_tokens_saved: u64,
     pub(crate) tool_results_compacted: u64,
@@ -76,7 +86,24 @@ fn load_stored_stats(data_dir: &Path) -> Result<StoredStats, StatsError> {
 }
 
 fn view(summary: SavingsSummary) -> StoredSavingsView {
+    let responses_requests = summary
+        .aged_requests
+        .saturating_add(summary.disabled_requests)
+        .saturating_add(summary.fail_original_requests)
+        .saturating_add(summary.no_eligible_requests)
+        .saturating_add(summary.no_savings_requests);
+
     StoredSavingsView {
+        requests_observed: summary.events,
+        responses_requests,
+        compaction_bypass_requests: summary.bypassed_requests,
+        native_passthrough_requests: summary.native_passthrough_requests,
+        disabled_requests: summary.disabled_requests,
+        fail_original_requests: summary.fail_original_requests,
+        no_eligible_requests: summary.no_eligible_requests,
+        no_savings_requests: summary.no_savings_requests,
+        tool_results_evaluated: summary.tool_results_evaluated,
+        tool_results_eligible: summary.tool_results_eligible,
         bytes_saved: summary.bytes_saved,
         estimated_tokens_saved: summary.estimated_tokens_saved,
         tool_results_compacted: summary.tool_results_compacted,
