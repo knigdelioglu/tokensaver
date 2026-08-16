@@ -17,5 +17,6 @@ pub(crate) mod doctor;
 pub(crate) mod measurement;
 pub(crate) mod quality;
 pub(crate) mod recovery;
+pub(crate) mod runtime_client;
 pub(crate) mod settings;
 pub(crate) mod stats;
