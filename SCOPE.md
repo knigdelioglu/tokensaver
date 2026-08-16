@@ -14,20 +14,21 @@ TokenSaver is implemented as a **modular monolith**.
 
 The application may run as one local product/runtime, but internal modules have explicit ownership and dependency boundaries. A module must not reach into another module's private state, persistence implementation, or internal types.
 
-Module boundaries:
+Module/product-edge boundaries:
 
 - **aging** — deterministic eligibility, receipts, receipt evidence/identity
 - **transport** — Codex request/response transport, compression, streaming, request activity
 - **codex integration** — reversible Codex configuration and drift/restoration state
 - **telemetry** — content-free savings events, aggregation, numeric persistence
 - **runtime** — process/service state and user runtime preferences
-- **diagnostics** — health/doctor reporting
+- **diagnostics** — redacted health primitives
 - **desktop/tray** — native menu-bar presentation and controls
-- **application** — cross-module use-case composition
+- **CLI** — terminal presentation/user intent only
+- **application** — cross-module use-case composition and product-edge DTOs
 
 Strongest dependency rule:
 
-> **The aging domain must remain transport-, Codex-, persistence-, telemetry-, and UI-agnostic.**
+> **The aging domain must remain transport-, Codex-, persistence-, telemetry-, runtime-, desktop-, and CLI-agnostic.**
 
 Conceptually:
 
@@ -47,16 +48,17 @@ runtime telemetry  codex integration
 
 Forbidden examples:
 
-- `aging -> tray`
+- `aging -> tray/CLI`
 - `aging -> Codex configuration`
 - `aging -> telemetry storage`
+- `runtime -> aging/transport/Codex/telemetry orchestration`
 - `telemetry -> transport internals`
 - `codex integration -> aging internals`
-- desktop UI reading module persistence directly
+- desktop UI or CLI reading module persistence directly
 
-`shared` may contain only genuinely cross-cutting low-level primitives such as filesystem safety and secret redaction. It must not become a domain dumping ground.
+`shared` may contain only genuinely cross-cutting low-level primitives such as filesystem safety, canonical local paths, and secret redaction. It must not become a domain dumping ground.
 
-Physical process separation is not required. The MVP may run tray, transport, aging, telemetry, runtime, and configuration management in one process.
+Physical process separation is not required. The MVP may run tray, transport, aging, telemetry, runtime, configuration management, diagnostics, and the CLI control server in one menu-bar process. A CLI invocation may be a short-lived client process but must not become a second inference proxy.
 
 ## In scope
 
@@ -138,7 +140,7 @@ TokenSaver may include deterministic fixtures for aging behavior, byte savings, 
 
 ### 9. Safety and regression testing
 
-Tests for preservation, eligibility, Unicode safety, hashing, pass-through behavior, protocol structure, recovery evidence, configuration restoration, lifecycle, and module-boundary enforcement are part of the product.
+Tests for preservation, eligibility, Unicode safety, hashing, pass-through behavior, protocol structure, recovery evidence, configuration restoration, lifecycle, CLI/control security, diagnostics redaction, and module-boundary enforcement are part of the product.
 
 ### 10. Minimal macOS tray/menu-bar control surface
 
@@ -153,7 +155,6 @@ The supported desktop build may provide a small TokenSaver-specific surface for:
 - Connect / Disconnect
 - Start at Login
 - safe Quit
-- later diagnostics/doctor entry points
 
 The tray is not a model/provider management surface.
 
@@ -162,10 +163,27 @@ The tray is not a model/provider management surface.
 TokenSaver may persist bounded owner-local operational state required for correct lifecycle:
 
 - reversible Codex config snapshot
-- runtime preferences such as saving state / reconnect-on-launch intent
+- runtime preferences such as saving/reconnect intent and aging thresholds
 - numeric content-free savings aggregates
 
 Normal process exit may be delayed/refused when immediate exit would knowingly strand Codex on a dead TokenSaver endpoint or interrupt an active Codex request.
+
+### 12. Minimal CLI and redacted diagnostics
+
+TokenSaver may expose a narrow terminal surface for its own operation and health:
+
+- status
+- Connect / Disconnect
+- saving on/off
+- content-free savings statistics
+- optimization-policy show/set
+- doctor/health checks
+
+Live mutation commands may use an owner-local finite control protocol to reach the single running menu-bar runtime. This protocol must never become arbitrary command execution or a second general local API/proxy.
+
+Offline CLI reads/writes may touch only TokenSaver-owned application state through application services.
+
+Doctor may inspect/redact only information necessary to assess TokenSaver/Codex integration health, local state permissions, restoration coherence, runtime reachability, and fixed first-party host reachability.
 
 ## Required invariants
 
@@ -213,7 +231,7 @@ Savings state/logs must not contain full original tool-result bodies or receipt 
 
 ### INV-11 — Module boundaries are enforced
 
-Cross-module behavior uses explicit application services/interfaces. The aging domain never acquires dependencies on Codex transport/configuration, UI, or telemetry persistence.
+Cross-module behavior uses explicit application services/interfaces. Aging never acquires dependencies on Codex transport/configuration, runtime, desktop/CLI, or telemetry persistence. Desktop and CLI do not bypass the application boundary to access product modules or persistence.
 
 ### INV-12 — Native conversation compaction sees original history
 
@@ -233,11 +251,19 @@ Normal Disconnect/Quit must not intentionally leave Codex configured to a TokenS
 
 ### INV-16 — Capability secrets stay local
 
-The caller capability must not enter routine telemetry or outward status text. Owner-only config/snapshot storage may contain it only because local routing/recovery requires it.
+The caller capability must not enter routine telemetry, tray text, CLI/control DTOs, or doctor output. Owner-only config/snapshot storage may contain it only because local routing/recovery requires it.
 
 ### INV-17 — UI state is not backend truth
 
 Tray toggle/checkmark state must be derived from application/runtime evidence. It must not substitute for actual Codex config state, transport state, OS autostart state, or measured telemetry.
+
+### INV-18 — CLI control is finite and owner-local
+
+The live CLI control channel must use an explicit finite protocol, bounded message sizes, owner-only local permissions, and a single runtime owner. It must not accept arbitrary shell commands, arbitrary filesystem operations, upstream proxy targets, model/provider routing, or tool-result content.
+
+### INV-19 — Diagnostics are redacted and evidence-bounded
+
+Doctor/status output must not expose provider credentials, account IDs, capability URLs, original tool-result bodies, receipt bodies, or arbitrary Codex config contents. A reachability probe must not be presented as proof of authenticated inference success.
 
 ## Out of scope
 
@@ -321,11 +347,15 @@ Out of scope:
 - provider analytics unrelated to TokenSaver
 - quota dashboards
 - large management dashboards
-- tray state unrelated to TokenSaver operation
+- tray/CLI state unrelated to TokenSaver operation
 
 ### Tool execution platform
 
 TokenSaver does not become a general coding-tool host. Any future exact-result recovery execution must remain narrowly tied to safely recovering content omitted by TokenSaver.
+
+### General local automation/control API
+
+The owner-local CLI control socket is not a plugin API, webhook receiver, remote-control server, shell bridge, or general automation bus.
 
 ## MVP definition
 
@@ -342,19 +372,21 @@ The MVP is complete when TokenSaver can:
 9. Preserve Codex model/account/MCP/skills/subagents/permissions/task state.
 10. Safely connect/disconnect and restore TokenSaver-owned Codex configuration.
 11. Provide a minimal macOS tray showing backend-derived connection/request/savings state.
-12. Persist saving/reconnect intent and bounded numeric savings state.
+12. Persist saving/reconnect intent, aging policy, and bounded numeric savings state.
 13. Safely detach on normal Quit without cutting active request streams.
-14. Pass automated and live validation for all required invariants.
+14. Provide a minimal CLI that controls the single runtime without starting a competing proxy.
+15. Provide redacted diagnostics without exposing capability/auth/result content.
+16. Pass automated and live validation for all required invariants.
 
-The MVP does **not** require a provider catalog, model selector, external-model routing, multi-agent orchestration, account-management system, or full dashboard.
+The MVP does **not** require a provider catalog, model selector, external-model routing, multi-agent orchestration, account-management system, full dashboard, or general local-control API.
 
 ## Scope-change rule
 
 Before adding a substantial feature, evaluate it against:
 
 1. Does it directly reduce repeated context/token usage, improve correctness/recovery/measurement, or safely operate that mechanism?
-2. Can it be implemented without turning TokenSaver into a general router or agent platform?
-3. Does it preserve fail-original/pass-through/recovery truthfulness?
+2. Can it be implemented without turning TokenSaver into a general router, agent platform, or automation bus?
+3. Does it preserve fail-original/pass-through/recovery truthfulness and secret redaction?
 4. Does it preserve modular-monolith boundaries, or is an explicit architecture decision required?
 
 If any answer is no, reject the feature or move it to a separate project.
