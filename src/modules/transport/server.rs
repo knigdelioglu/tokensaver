@@ -155,7 +155,7 @@ enum NativeRouteKind {
     Passthrough,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct NativeRoute {
     method: Method,
     kind: NativeRouteKind,
