@@ -107,11 +107,12 @@ mod tests {
     use crate::modules::runtime::RuntimePreferences;
 
     #[test]
-    fn persisted_policy_defaults_match_aging_domain_defaults() {
+    fn product_defaults_are_opt_in_but_structural_policy_matches_aging_domain() {
         let preferences = RuntimePreferences::default();
         let policy = AgingPolicy::default();
 
-        assert_eq!(preferences.saving_enabled, policy.enabled);
+        assert!(!preferences.saving_enabled, "fresh product installs are opt-in");
+        assert!(policy.enabled, "the pure aging domain remains enabled by default when invoked directly");
         assert_eq!(preferences.min_bytes, policy.min_bytes);
         assert_eq!(preferences.frontier, policy.frontier);
         assert_eq!(preferences.preview_code_units, policy.preview_code_units);
