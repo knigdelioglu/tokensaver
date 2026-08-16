@@ -148,6 +148,19 @@ struct ServerState {
     client: reqwest::Client,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeRouteKind {
+    Responses,
+    Compaction,
+    Passthrough,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeRoute {
+    method: Method,
+    kind: NativeRouteKind,
+}
+
 #[derive(Debug)]
 pub(crate) enum TransportError {
     Io(io::Error),
@@ -188,26 +201,29 @@ async fn handle_request(
         return empty_response(StatusCode::FORBIDDEN);
     }
 
-    let Some(upstream_path) = state.capability.authenticate_path(request.uri().path()) else {
+    let Some(local_path) = state.capability.authenticate_path(request.uri().path()) else {
         return empty_response(StatusCode::NOT_FOUND);
     };
-    if !is_supported_path(upstream_path) {
+    let Some(route) = native_route(local_path) else {
         return empty_response(StatusCode::NOT_FOUND);
-    }
+    };
 
     // Current Codex advertises WebSocket support for the built-in OpenAI
-    // provider even when openai_base_url is overridden. TokenSaver serves HTTP
-    // only and uses the client's explicit 426 -> HTTP fallback behavior.
-    if request.headers().get(UPGRADE).is_some() {
+    // provider even when openai_base_url is overridden. TokenSaver intentionally
+    // serves HTTP only and relies on Codex's explicit 426 -> HTTP fallback.
+    if route.kind == NativeRouteKind::Responses && request.headers().get(UPGRADE).is_some() {
         return empty_response(StatusCode::UPGRADE_REQUIRED);
     }
-    if request.method() != Method::POST {
+    if request.method() != route.method {
         return empty_response(StatusCode::METHOD_NOT_ALLOWED);
     }
-    if !is_json_request(request.headers()) {
+    if route.method == Method::POST && !is_json_request(request.headers()) {
         return empty_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
 
+    let Some(upstream_path) = upstream_path(local_path) else {
+        return empty_response(StatusCode::NOT_FOUND);
+    };
     let query = request.uri().query().map(str::to_owned);
     let inbound_headers = request.headers().clone();
     let upstream_base_url = native_upstream_base_url(&inbound_headers);
@@ -227,7 +243,7 @@ async fn handle_request(
     let prepared = prepare_responses_body(
         &body,
         content_encoding.as_deref(),
-        upstream_path,
+        local_path,
         policy,
     );
 
@@ -255,7 +271,7 @@ async fn handle_request(
 
     let upstream = match state
         .client
-        .post(upstream_url)
+        .request(route.method, upstream_url)
         .headers(headers)
         .body(prepared.bytes)
         .send()
@@ -281,6 +297,44 @@ fn native_upstream_base_url(headers: &HeaderMap) -> &'static str {
     }
 }
 
+/// TokenSaver's configured local base URL ends in `/v1`. Both first-party
+/// upstream constants already represent their provider base, so forwarding
+/// strips exactly that local prefix before joining the native path.
+fn upstream_path(local_path: &str) -> Option<&str> {
+    let path = local_path.strip_prefix("/v1")?;
+    if path.starts_with('/') {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn native_route(path: &str) -> Option<NativeRoute> {
+    let route = match path {
+        "/v1/responses" => NativeRoute {
+            method: Method::POST,
+            kind: NativeRouteKind::Responses,
+        },
+        "/v1/responses/compact" => NativeRoute {
+            method: Method::POST,
+            kind: NativeRouteKind::Compaction,
+        },
+        "/v1/models" => NativeRoute {
+            method: Method::GET,
+            kind: NativeRouteKind::Passthrough,
+        },
+        "/v1/memories/trace_summarize"
+        | "/v1/alpha/search"
+        | "/v1/images/generations"
+        | "/v1/images/edits" => NativeRoute {
+            method: Method::POST,
+            kind: NativeRouteKind::Passthrough,
+        },
+        _ => return None,
+    };
+    Some(route)
+}
+
 fn relay_response(upstream: reqwest::Response) -> Response<Body> {
     let status = upstream.status();
     let upstream_headers = upstream.headers().clone();
@@ -297,13 +351,6 @@ fn relay_response(upstream: reqwest::Response) -> Response<Body> {
         response.headers_mut().append(name.clone(), value.clone());
     }
     response
-}
-
-fn is_supported_path(path: &str) -> bool {
-    matches!(
-        path,
-        "/responses" | "/v1/responses" | "/responses/compact" | "/v1/responses/compact"
-    )
 }
 
 fn is_json_request(headers: &HeaderMap) -> bool {
@@ -341,8 +388,11 @@ fn empty_response(status: StatusCode) -> Response<Body> {
 
 #[cfg(test)]
 mod routing_tests {
-    use super::{native_upstream_base_url, CHATGPT_CODEX_BASE_URL, OPENAI_API_BASE_URL};
-    use axum::http::{HeaderMap, HeaderValue};
+    use super::{
+        native_route, native_upstream_base_url, upstream_path, NativeRouteKind,
+        CHATGPT_CODEX_BASE_URL, OPENAI_API_BASE_URL,
+    };
+    use axum::http::{HeaderMap, HeaderValue, Method};
 
     #[test]
     fn account_scoped_auth_routes_to_chatgpt_backend() {
@@ -356,5 +406,29 @@ mod routing_tests {
         let mut headers = HeaderMap::new();
         headers.insert("authorization", HeaderValue::from_static("Bearer sk-test"));
         assert_eq!(native_upstream_base_url(&headers), OPENAI_API_BASE_URL);
+    }
+
+    #[test]
+    fn local_v1_prefix_is_removed_once_for_native_upstream() {
+        assert_eq!(upstream_path("/v1/responses"), Some("/responses"));
+        assert_eq!(upstream_path("/responses"), None);
+    }
+
+    #[test]
+    fn finite_native_route_allowlist_has_expected_methods() {
+        let models = native_route("/v1/models").expect("models route");
+        assert_eq!(models.method, Method::GET);
+        assert_eq!(models.kind, NativeRouteKind::Passthrough);
+
+        let responses = native_route("/v1/responses").expect("responses route");
+        assert_eq!(responses.method, Method::POST);
+        assert_eq!(responses.kind, NativeRouteKind::Responses);
+
+        let compact = native_route("/v1/responses/compact").expect("compact route");
+        assert_eq!(compact.method, Method::POST);
+        assert_eq!(compact.kind, NativeRouteKind::Compaction);
+
+        assert!(native_route("/v1/realtime/calls").is_none());
+        assert!(native_route("/v1/arbitrary-proxy-target").is_none());
     }
 }
