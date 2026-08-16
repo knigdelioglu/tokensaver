@@ -39,6 +39,11 @@ pub(crate) enum CodexConfigError {
     UnsafeLoopbackUrl(String),
     SnapshotFormat(String),
     UnsupportedSnapshotVersion(u32),
+    ActiveSnapshotDifferentEndpoint {
+        installed: String,
+        requested: String,
+    },
+    SnapshotDrift,
     Drift {
         expected: String,
         actual: Option<String>,
@@ -60,6 +65,14 @@ impl fmt::Display for CodexConfigError {
             Self::UnsupportedSnapshotVersion(version) => {
                 write!(formatter, "unsupported TokenSaver config snapshot version: {version}")
             }
+            Self::ActiveSnapshotDifferentEndpoint { installed, requested } => write!(
+                formatter,
+                "TokenSaver is already connected at {installed:?}; refusing to replace it with {requested:?} without a clean disconnect"
+            ),
+            Self::SnapshotDrift => write!(
+                formatter,
+                "TokenSaver snapshot exists but Codex configuration has drifted; refusing automatic overwrite"
+            ),
             Self::Drift { expected, actual } => write!(
                 formatter,
                 "Codex openai_base_url changed after TokenSaver connected; expected {expected:?}, found {actual:?}"
@@ -82,6 +95,77 @@ impl From<io::Error> for CodexConfigError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
     }
+}
+
+/// Crash-safe connection transaction.
+///
+/// The restoration snapshot is durably written before the Codex config is
+/// changed. An existing active snapshot is never silently replaced.
+pub(crate) fn connect_with_snapshot(
+    config_path: &Path,
+    snapshot_path: &Path,
+    loopback_base_url: &str,
+) -> Result<CodexConfigSnapshot, CodexConfigError> {
+    validate_loopback_base_url(loopback_base_url)?;
+
+    if snapshot_path.exists() {
+        let existing = load_config_snapshot(snapshot_path)?;
+        match connection_state_file(config_path, &existing)? {
+            CodexConnectionState::Connected => {
+                if existing.installed_openai_base_url == loopback_base_url {
+                    return Ok(existing);
+                }
+                return Err(CodexConfigError::ActiveSnapshotDifferentEndpoint {
+                    installed: existing.installed_openai_base_url,
+                    requested: loopback_base_url.to_owned(),
+                });
+            }
+            CodexConnectionState::Drifted => return Err(CodexConfigError::SnapshotDrift),
+            CodexConnectionState::NotConnected => {
+                fs::remove_file(snapshot_path)?;
+            }
+        }
+    }
+
+    let source = match fs::read_to_string(config_path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(CodexConfigError::Io(error)),
+    };
+    let (next, snapshot) = connect_config_text(&source, loopback_base_url)?;
+
+    save_config_snapshot(snapshot_path, &snapshot)?;
+    if let Err(error) = atomic_write_private(config_path, &next) {
+        let _ = fs::remove_file(snapshot_path);
+        return Err(CodexConfigError::Io(error));
+    }
+
+    Ok(snapshot)
+}
+
+pub(crate) fn disconnect_with_snapshot(
+    config_path: &Path,
+    snapshot_path: &Path,
+) -> Result<CodexConfigSnapshot, CodexConfigError> {
+    let snapshot = load_config_snapshot(snapshot_path)?;
+    disconnect_config_file(config_path, &snapshot)?;
+    match fs::remove_file(snapshot_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(CodexConfigError::Io(error)),
+    }
+    Ok(snapshot)
+}
+
+pub(crate) fn connection_state_with_snapshot(
+    config_path: &Path,
+    snapshot_path: &Path,
+) -> Result<CodexConnectionState, CodexConfigError> {
+    if !snapshot_path.exists() {
+        return Ok(CodexConnectionState::NotConnected);
+    }
+    let snapshot = load_config_snapshot(snapshot_path)?;
+    connection_state_file(config_path, &snapshot)
 }
 
 pub(crate) fn connect_config_file(
