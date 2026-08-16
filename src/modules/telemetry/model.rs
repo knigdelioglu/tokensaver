@@ -29,8 +29,13 @@ pub(crate) struct OptimizationMetrics {
 }
 
 impl OptimizationMetrics {
+    /// Mirrors the reference router's `Math.round(bytes / 4)` estimate for
+    /// non-negative byte counts. This value is deliberately approximate;
+    /// provider-reported usage remains authoritative when available.
     pub(crate) fn estimated_tokens_saved(self) -> u64 {
-        self.bytes_saved.div_ceil(BYTES_PER_TOKEN_ESTIMATE)
+        self.bytes_saved
+            .saturating_add(BYTES_PER_TOKEN_ESTIMATE / 2)
+            / BYTES_PER_TOKEN_ESTIMATE
     }
 }
 
