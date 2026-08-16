@@ -46,24 +46,37 @@ fn consumed_request_json() -> Vec<u8> {
 }
 
 #[test]
-fn capability_authenticates_only_exact_secret_segment() {
+fn capability_authenticates_only_exact_secret_and_v1_prefix() {
     let capability = CallerCapability::from_secret("secret-value");
     assert_eq!(
-        capability.authenticate_path("/secret-value/responses"),
-        Some("/responses")
+        capability.authenticate_path("/secret-value/v1/responses"),
+        Some("/v1/responses")
     );
-    assert_eq!(capability.authenticate_path("/wrong/responses"), None);
-    assert_eq!(capability.authenticate_path("/secret-value-extra/responses"), None);
+    assert_eq!(capability.authenticate_path("/wrong/v1/responses"), None);
+    assert_eq!(capability.authenticate_path("/secret-value-extra/v1/responses"), None);
+    assert_eq!(capability.authenticate_path("/secret-value/responses"), None);
 }
 
 #[test]
-fn disabled_mode_keeps_encoded_body_byte_for_byte() {
+fn capability_base_url_round_trips_port_secret_and_v1() {
+    let secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let capability = CallerCapability::from_secret(secret);
+    let url = capability.loopback_base_url(43117);
+    assert_eq!(url, format!("http://127.0.0.1:43117/{secret}/v1"));
+
+    let (port, recovered) = CallerCapability::from_loopback_base_url(&url).expect("recover URL");
+    assert_eq!(port, 43117);
+    assert_eq!(recovered.loopback_base_url(port), url);
+}
+
+#[test]
+fn disabled_mode_keeps_responses_body_byte_for_byte() {
     let source = consumed_request_json();
     let policy = AgingPolicy {
         enabled: false,
         ..aging_policy()
     };
-    let prepared = prepare_responses_body(&source, None, "/responses", policy);
+    let prepared = prepare_responses_body(&source, None, "/v1/responses", policy);
 
     assert_eq!(prepared.outcome, PreparationOutcome::Disabled);
     assert_eq!(prepared.bytes, source);
@@ -71,11 +84,29 @@ fn disabled_mode_keeps_encoded_body_byte_for_byte() {
 }
 
 #[test]
-fn compact_endpoint_bypasses_aging_byte_for_byte() {
+fn compact_endpoint_bypasses_aging_byte_for_byte_even_when_saving_is_off() {
     let source = consumed_request_json();
-    let prepared = prepare_responses_body(&source, None, "/responses/compact", aging_policy());
+    let policy = AgingPolicy {
+        enabled: false,
+        ..aging_policy()
+    };
+    let prepared = prepare_responses_body(&source, None, "/v1/responses/compact", policy);
 
     assert_eq!(prepared.outcome, PreparationOutcome::CompactionBypass);
+    assert_eq!(prepared.bytes, source);
+    assert!(!prepared.body_changed);
+}
+
+#[test]
+fn native_endpoint_is_passthrough_independent_of_saving_toggle() {
+    let source = br#"{"query":"hello"}"#.to_vec();
+    let policy = AgingPolicy {
+        enabled: false,
+        ..aging_policy()
+    };
+    let prepared = prepare_responses_body(&source, None, "/v1/alpha/search", policy);
+
+    assert_eq!(prepared.outcome, PreparationOutcome::NativePassthrough);
     assert_eq!(prepared.bytes, source);
     assert!(!prepared.body_changed);
 }
@@ -84,7 +115,7 @@ fn compact_endpoint_bypasses_aging_byte_for_byte() {
 fn ordinary_responses_request_changes_only_eligible_output_semantically() {
     let source = consumed_request_json();
     let original: Value = serde_json::from_slice(&source).expect("original JSON");
-    let prepared = prepare_responses_body(&source, None, "/responses", aging_policy());
+    let prepared = prepare_responses_body(&source, None, "/v1/responses", aging_policy());
     let optimized: Value = serde_json::from_slice(&prepared.bytes).expect("optimized JSON");
 
     assert_eq!(prepared.outcome, PreparationOutcome::Aged);
@@ -113,7 +144,7 @@ fn mixed_output_is_preserved() {
     }))
     .expect("serialize mixed fixture");
 
-    let prepared = prepare_responses_body(&source, None, "/responses", aging_policy());
+    let prepared = prepare_responses_body(&source, None, "/v1/responses", aging_policy());
     assert_eq!(prepared.outcome, PreparationOutcome::EvaluatedNoEligibleResult);
     assert_eq!(prepared.bytes, source);
 }
@@ -124,7 +155,8 @@ fn supported_content_encodings_round_trip_when_aging_changes_body() {
     for encoding in ["gzip", "x-gzip", "deflate", "br", "zstd"] {
         let chain = EncodingChain::parse(Some(encoding)).expect("encoding");
         let encoded = chain.encode(&source).expect("encode fixture");
-        let prepared = prepare_responses_body(&encoded, Some(encoding), "/responses", aging_policy());
+        let prepared =
+            prepare_responses_body(&encoded, Some(encoding), "/v1/responses", aging_policy());
         assert_eq!(prepared.outcome, PreparationOutcome::Aged, "{encoding}");
         let decoded = chain.decode(&prepared.bytes).expect("decode optimized");
         let optimized: Value = serde_json::from_slice(&decoded).expect("optimized JSON");
@@ -137,7 +169,8 @@ fn supported_content_encodings_round_trip_when_aging_changes_body() {
 #[test]
 fn unsupported_encoding_fails_original() {
     let source = consumed_request_json();
-    let prepared = prepare_responses_body(&source, Some("compress"), "/responses", aging_policy());
+    let prepared =
+        prepare_responses_body(&source, Some("compress"), "/v1/responses", aging_policy());
     assert_eq!(prepared.outcome, PreparationOutcome::FailOriginal);
     assert_eq!(prepared.bytes, source);
 }
@@ -150,11 +183,16 @@ fn browser_origin_is_rejected_and_auth_headers_are_allowlisted() {
     headers.insert("chatgpt-account-id", HeaderValue::from_static("account"));
     headers.insert("cookie", HeaderValue::from_static("private-cookie"));
     headers.insert("x-random-header", HeaderValue::from_static("nope"));
+    headers.insert("content-type", HeaderValue::from_static("application/json; charset=utf-8"));
 
     assert!(has_browser_origin(&headers));
     let forwarded = native_upstream_headers(&headers);
     assert_eq!(forwarded.get("authorization").unwrap(), "Bearer secret");
     assert_eq!(forwarded.get("chatgpt-account-id").unwrap(), "account");
+    assert_eq!(
+        forwarded.get("content-type").unwrap(),
+        "application/json; charset=utf-8"
+    );
     assert!(forwarded.get("cookie").is_none());
     assert!(forwarded.get("x-random-header").is_none());
     assert!(forwarded.get("origin").is_none());
