@@ -24,11 +24,13 @@ use crate::modules::telemetry::{
     DurableSavingsStore, LastOptimization, SavingsLedger, SavingsStoreError, SavingsSummary,
 };
 use crate::modules::transport::TransportControl;
+use crate::shared::paths::control_socket_path;
 
 use super::codex_connection::{
     disconnect_native_codex, prepare_native_codex_connection, CodexConnectionError,
     CodexConnectionRecord, PreparedCodexConnection,
 };
+use super::control::serve_control_socket;
 use super::measurement::event_from_transport_observation;
 
 const SNAPSHOT_FILE: &str = "codex-config-snapshot.json";
@@ -225,6 +227,30 @@ impl DesktopRuntimeController {
                 runtime.last_error = None;
             });
         }
+        self.start_control_server();
+    }
+
+    fn start_control_server(&self) {
+        let socket_path = match control_socket_path() {
+            Ok(path) => path,
+            Err(error) => {
+                self.status.update(|runtime| {
+                    runtime.service = ServiceStatus::Error;
+                    runtime.last_error = Some(format!("CLI control path failed: {error}"));
+                });
+                return;
+            }
+        };
+        let controller = self.clone();
+        let status = self.status.clone();
+        tokio::spawn(async move {
+            if let Err(error) = serve_control_socket(socket_path, controller).await {
+                status.update(|runtime| {
+                    runtime.service = ServiceStatus::Error;
+                    runtime.last_error = Some(format!("CLI control server failed: {error}"));
+                });
+            }
+        });
     }
 
     pub(crate) async fn connect(&self) -> Result<(), DesktopRuntimeError> {
@@ -425,13 +451,15 @@ impl DesktopRuntimeController {
     }
 
     pub(crate) async fn set_min_bytes(&self, value: usize) -> Result<(), DesktopRuntimeError> {
-        self.ensure_policy_change_is_offline().await?;
+        let _operation = self.operation.lock().await;
+        self.ensure_disconnected_for_policy_change().await?;
         self.preferences.lock().await.set_min_bytes(value)?;
         Ok(())
     }
 
     pub(crate) async fn set_frontier(&self, value: usize) -> Result<(), DesktopRuntimeError> {
-        self.ensure_policy_change_is_offline().await?;
+        let _operation = self.operation.lock().await;
+        self.ensure_disconnected_for_policy_change().await?;
         self.preferences.lock().await.set_frontier(value)?;
         Ok(())
     }
@@ -440,7 +468,8 @@ impl DesktopRuntimeController {
         &self,
         value: usize,
     ) -> Result<(), DesktopRuntimeError> {
-        self.ensure_policy_change_is_offline().await?;
+        let _operation = self.operation.lock().await;
+        self.ensure_disconnected_for_policy_change().await?;
         self.preferences
             .lock()
             .await
@@ -448,8 +477,7 @@ impl DesktopRuntimeController {
         Ok(())
     }
 
-    async fn ensure_policy_change_is_offline(&self) -> Result<(), DesktopRuntimeError> {
-        let _operation = self.operation.lock().await;
+    async fn ensure_disconnected_for_policy_change(&self) -> Result<(), DesktopRuntimeError> {
         if self.inner.lock().await.connection.is_some() {
             return Err(DesktopRuntimeError::PolicyChangeRequiresDisconnect);
         }
