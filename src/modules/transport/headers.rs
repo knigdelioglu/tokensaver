@@ -1,11 +1,12 @@
 use axum::http::header::{ACCEPT_ENCODING, CONTENT_TYPE, ORIGIN};
 use axum::http::{HeaderMap, HeaderName, HeaderValue};
 
-/// Native Codex request headers that TokenSaver may relay to the fixed OpenAI
-/// upstream. The list intentionally excludes browser/proxy/hop-by-hop headers.
+/// Native Codex request headers that TokenSaver may relay to first-party OpenAI
+/// upstreams. The list intentionally excludes browser/proxy/hop-by-hop headers.
 const FORWARD_HEADERS: &[&str] = &[
     "authorization",
     "chatgpt-account-id",
+    "if-none-match",
     "openai-beta",
     "openai-organization",
     "openai-project",
@@ -34,8 +35,11 @@ pub(crate) fn has_browser_origin(headers: &HeaderMap) -> bool {
 
 pub(crate) fn native_upstream_headers(headers: &HeaderMap) -> HeaderMap {
     let mut forwarded = HeaderMap::new();
-    forwarded.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     forwarded.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
+
+    if let Some(content_type) = headers.get(CONTENT_TYPE) {
+        forwarded.insert(CONTENT_TYPE, content_type.clone());
+    }
 
     for name in FORWARD_HEADERS {
         let Ok(header_name) = HeaderName::from_bytes(name.as_bytes()) else {
