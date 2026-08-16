@@ -6,7 +6,7 @@
 //! Measurement/benchmark orchestration keeps telemetry independent from aging.
 //! Native Codex connection orchestration binds transport before applying the
 //! reversible Codex configuration change. Desktop runtime composition joins
-//! lifecycle, telemetry, Codex transport, diagnostics, settings, and the
+//! lifecycle, telemetry, Codex transport, diagnostics, settings, stats, and the
 //! owner-local CLI control channel without weakening module borders.
 
 pub(crate) mod benchmark;
@@ -18,3 +18,4 @@ pub(crate) mod measurement;
 pub(crate) mod quality;
 pub(crate) mod recovery;
 pub(crate) mod settings;
+pub(crate) mod stats;
