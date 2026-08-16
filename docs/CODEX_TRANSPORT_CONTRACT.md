@@ -2,365 +2,317 @@
 
 ## Purpose
 
-This document defines the integration boundary TokenSaver must satisfy before it may transparently optimize real Codex traffic.
+TokenSaver transparently intercepts the built-in OpenAI provider used by Codex, applies safe historical tool-result aging, and forwards the request to the same first-party upstream family Codex would otherwise use.
 
-The contract is intentionally narrower than Codex Router. TokenSaver does not select or translate models. It intercepts the user's existing native Codex request path only to apply safe tool-result aging and then forwards the request to the same intended native upstream.
+TokenSaver is not a provider/model router. It does not choose alternative models, translate third-party protocols, or own OpenAI credentials.
 
-The original token-aging behavior was derived from `duolahypercho/codex-router` around `v0.4.0-beta.4`. Version-sensitive Codex transport/configuration behavior is verified against OpenAI Codex itself before implementation.
+## Verified Codex baseline
 
-## Phase 3 verified Codex baseline
-
-Phase 3 implementation was reviewed against OpenAI Codex commit:
+Phase 3 was reviewed against OpenAI Codex commit:
 
 `9ded177ce7c1c0bd2047f902936c177612ab3434`
 
 Verified properties used by TokenSaver:
 
-1. `ConfigToml` exposes a root `openai_base_url` specifically as the base URL override for the built-in `openai` model provider.
-2. The built-in OpenAI provider receives that override while retaining its normal Responses wire API, OpenAI-auth requirement, WebSocket support, and native provider identity.
-3. TokenSaver therefore owns only root `openai_base_url`; it does **not** create or replace `model_providers.openai`.
-4. Codex resolves its home from a non-empty `CODEX_HOME` when provided and otherwise uses `~/.codex`; TokenSaver follows the same rule for `config.toml`.
-5. Codex's own WebSocket fallback test verifies that HTTP `426 Upgrade Required` on the Responses WebSocket connection immediately switches the session to HTTP Responses transport.
-6. Codex's own ChatGPT-backend compression test verifies current request bodies may use `Content-Encoding: zstd`.
-7. The native compact endpoint path is `responses/compact`; TokenSaver bypasses aging for both `/responses/compact` and `/v1/responses/compact` forms produced by base-URL composition.
+1. root `openai_base_url` overrides the built-in `openai` provider
+2. the built-in provider retains Responses wire behavior, OpenAI auth, and WebSocket capability when this URL is overridden
+3. `CODEX_HOME` is used when present; otherwise Codex home is `~/.codex`
+4. Codex's own test suite treats HTTP `426 Upgrade Required` during Responses WebSocket connect as an immediate switch to HTTP Responses
+5. native ChatGPT-backend request compression can use `Content-Encoding: zstd`
+6. remote compaction uses `responses/compact`
+7. first-party auth attaches `Authorization`; account-scoped ChatGPT/agent auth also attaches `ChatGPT-Account-ID`, while API-key auth has no account ID
 
-TokenSaver additionally accepts gzip/x-gzip, deflate, and Brotli request encodings defensively because these are safely reversible transport encodings and have been used by the reference router. Their presence is not claimed as a requirement of the pinned Codex commit.
+The baseline is version-sensitive. Future Codex changes require compatibility review rather than speculative config rewrites.
 
-This baseline is not a promise about every future Codex release. Later releases must be compatibility-checked before TokenSaver silently changes config or transport assumptions.
+## Core semantic invariant
 
-## Non-negotiable semantic invariant
+For one logical Codex request:
 
-For one logical Codex request, compare:
+```text
+TokenSaver OFF
+vs.
+TokenSaver ON
+```
 
-- TokenSaver connected with aging disabled
-- TokenSaver connected with aging enabled
+the semantic payload may differ only in historical tool-result `output` fields explicitly approved by the aging policy.
 
-The semantic payloads may differ only where the aging policy explicitly permits an eligible historical tool-result body to be replaced with a deterministic receipt.
+TokenSaver must not rewrite:
 
-TokenSaver must not silently rewrite:
-
-- user messages
-- system/developer instructions
+- user/system/developer messages
 - assistant messages
 - reasoning items
 - tool-call arguments
 - model selection
 - reasoning level
-- MCP configuration
-- skills
-- subagent configuration
-- unrelated request parameters
+- MCP/skills/subagent settings
+- unrelated request fields
+- upstream model responses
 
-## Connection model
+## Configuration ownership
 
-Target flow:
-
-```text
-Codex
-  │
-  │ native Responses traffic
-  ▼
-TokenSaver loopback endpoint
-  │
-  ├─ authenticate capability path
-  ├─ inspect/decode request
-  ├─ bypass explicit conversation compaction
-  ├─ optionally age eligible historical tool results
-  └─ preserve unrelated semantics
-  │
-  ▼
-Same native Codex/OpenAI upstream
-  │
-  ▼
-TokenSaver relays stream
-  │
-  ▼
-Codex
-```
-
-TokenSaver preserves the normal Codex account and model-selection experience.
-
-## Codex configuration ownership
-
-For the verified baseline, TokenSaver may own exactly one Codex configuration key:
+For the verified Codex baseline TokenSaver owns exactly one Codex key:
 
 ```toml
 openai_base_url = "http://127.0.0.1:<port>/<capability>"
 ```
 
-It must not create a substitute OpenAI provider table.
+It must **not** replace or create `model_providers.openai`.
 
-Before changing the Codex config, TokenSaver must durably snapshot:
-
-- whether `openai_base_url` previously existed
-- its exact previous string value when present
-- the exact TokenSaver endpoint installed
-
-Connect ordering is:
+### Connect transaction
 
 ```text
-resolve/recover endpoint
+resolve or recover endpoint
   ↓
-bind loopback listener successfully
+bind loopback successfully
   ↓
 write owner-only restoration snapshot
   ↓
-atomically update Codex config
+atomically write openai_base_url
 ```
 
-Disconnect ordering is:
+Snapshot records:
+
+- schema version
+- whether `openai_base_url` existed
+- previous value when present
+- exact TokenSaver endpoint installed
+
+### Disconnect transaction
 
 ```text
 load snapshot
   ↓
-verify current openai_base_url is still TokenSaver-owned value
+verify current value still equals TokenSaver-installed value
   ↓
-restore/remove only that key
+restore/remove only openai_base_url
   ↓
-atomically write Codex config
+atomically write config
   ↓
 remove snapshot
 ```
 
-If the current value differs from the value TokenSaver installed, that is configuration drift. TokenSaver must not overwrite it.
+A different current value is **drift**. TokenSaver refuses to overwrite it.
 
-Connect must not change:
+### Restart rule
 
-- selected model
-- model reasoning settings
-- MCP configuration
-- skills
-- project trust
-- permissions
-- subagent settings
-- unrelated provider entries
-- unrelated root configuration
+If snapshot/config survive an unclean shutdown:
 
-## Restart ownership
+- load the snapshot before generating a new endpoint
+- recover the exact old port and capability
+- bind that same endpoint
+- leave matching Codex config untouched
+- if it cannot be safely recovered/rebound, report failure rather than silently rotating the endpoint
 
-The capability URL is part of TokenSaver-owned local state. After an unclean shutdown, the persisted snapshot may still point Codex at the previous loopback endpoint.
+## Local caller security
 
-On restart TokenSaver must:
+The loopback endpoint uses a 256-bit random capability encoded as lowercase hex in the URL path:
 
-1. load the existing snapshot before creating a fresh endpoint
-2. recover the exact prior loopback port and capability from the installed URL
-3. bind that exact endpoint successfully
-4. leave Codex config unchanged when it already matches
+```text
+http://127.0.0.1:<port>/<capability>
+```
 
-If that endpoint cannot be safely recovered or rebound, TokenSaver must report an error rather than silently rotate the capability while Codex still points to the old endpoint.
+Rules:
 
-## Request paths
+- bind only to loopback
+- capability must match before upstream handling
+- compare equal-length secrets without early byte mismatch exit
+- reject browser-origin requests
+- expose no permissive CORS surface
+- accept only explicitly supported Responses paths
+- use fixed first-party upstreams only
+- never act as a general local forward proxy
+- capability must not appear in routine logs/telemetry
 
-### Ordinary Responses traffic
+## Native upstream preservation
 
-Supported native inference paths:
+Overriding `openai_base_url` hides the built-in provider's original target URL from the request itself. TokenSaver preserves Codex's first-party auth-mode distinction using the request headers Codex already emits:
+
+### Account-scoped request
+
+If request headers contain:
+
+- `ChatGPT-Account-ID`, or
+- `X-OpenAI-Fedramp`
+
+TokenSaver forwards to:
+
+```text
+https://chatgpt.com/backend-api/codex
+```
+
+### API-key-style request
+
+When there is no account-scoped routing header, TokenSaver forwards to:
+
+```text
+https://api.openai.com/v1
+```
+
+TokenSaver does not inspect/decode bearer credentials to make this decision and does not store them.
+
+## Authentication/header contract
+
+TokenSaver relays Codex-provided credentials rather than replacing them.
+
+The upstream request header set is allow-listed. It may include first-party Codex/OpenAI fields such as:
+
+- `authorization`
+- `chatgpt-account-id`
+- `x-openai-fedramp`
+- `openai-beta`
+- `openai-organization`
+- `openai-project`
+- Codex request/session/attestation metadata required by native traffic
+
+It excludes arbitrary browser, cookie, proxy, and unknown headers.
+
+Transport observations never contain auth values.
+
+## Supported paths
+
+Ordinary Responses:
 
 - `/responses`
 - `/v1/responses`
 
-Expected processing order:
-
-```text
-receive request
-  ↓
-validate loopback caller capability
-  ↓
-reject browser-origin traffic
-  ↓
-decode body compression when optimization needs inspection
-  ↓
-parse only what is required
-  ↓
-normalize Responses history
-  ↓
-run aging policy
-  ↓
-validate index + tool-result kind + call_id before each replacement
-  ↓
-replace only eligible output fields
-  ↓
-serialize/recompress as required
-  ↓
-forward to fixed native upstream
-```
-
-When no rewrite is required, TokenSaver should preserve the original encoded request body rather than decode/re-serialize it merely for transport convenience.
-
-### Conversation compaction
-
-Supported bypass paths:
+Compaction bypass:
 
 - `/responses/compact`
 - `/v1/responses/compact`
 
-The compaction summarizer must receive the original history. TokenSaver does not age tool-result bodies on this path.
-
-Tool-result aging and conversation compaction are complementary; TokenSaver must not optimize one by degrading the other.
-
-## Authentication contract
-
-TokenSaver does not require a separate OpenAI API key merely to optimize the user's existing native Codex request path.
-
-Rules:
-
-- relay authentication Codex already supplies
-- use an explicit upstream-header allow-list
-- do not forward arbitrary browser, cookie, proxy, or local headers
-- never log tokens, account identifiers, capability secrets, or equivalent credentials
-- never expose them in tray/CLI/status output
-- never replace a credential explicitly supplied by the caller with a different credential
-
-The allow-list is version-sensitive and remains subject to compatibility review.
-
-## Loopback security
-
-The local service must:
-
-- bind to loopback only
-- avoid public LAN/WAN exposure
-- require a cryptographically random capability carried in the configured URL path
-- compare the capability before considering any upstream request
-- reject browser-origin traffic
-- expose no permissive CORS surface
-- proxy only explicitly supported Responses paths to a fixed upstream
-- redact the capability from diagnostics/user-visible output unless a dedicated recovery workflow requires it
-
-The service is not a generic local forward proxy.
+Unsupported paths are not proxied.
 
 ## WebSocket fallback
 
-The built-in OpenAI provider currently advertises WebSocket support. TokenSaver Phase 3 intentionally implements HTTP Responses relay only.
+The built-in OpenAI provider currently advertises WebSocket support. TokenSaver implements HTTP Responses relay only.
 
-When Codex attempts a WebSocket upgrade on the protected Responses path, TokenSaver returns:
+For a WebSocket Upgrade attempt on a protected Responses path TokenSaver returns:
 
 `426 Upgrade Required`
 
-The pinned Codex test suite explicitly treats this status as a signal to switch immediately to the HTTP Responses path. TokenSaver does not emulate a partial WebSocket session.
+The pinned Codex test suite explicitly recognizes this as immediate HTTP fallback.
 
-## Request-body compression
+## Compression contract
 
-Current native ChatGPT traffic may use Zstandard compression. TokenSaver supports:
+TokenSaver supports:
 
-- `zstd`
-- `gzip`
-- `x-gzip`
-- `deflate`
-- `br`
-- identity/no encoding
+- identity
+- zstd
+- gzip
+- x-gzip
+- deflate
+- Brotli
+
+Zstandard is verified in the pinned Codex ChatGPT request-compression test. The other reversible formats are defensive compatibility inherited from the reference router behavior; they are not claimed as current Codex requirements.
 
 Rules:
 
-- multiple declared encodings are decoded in reverse application order
-- decoded body size is bounded
-- unsupported or malformed encodings never produce a speculative rewritten body
-- if aging does not change the request, the original encoded bytes are retained
-- if aging changes the request, the rewritten body is encoded using the same declared encoding chain
+- decode declared chains in reverse application order
+- bound decoded body size
+- preserve original encoded bytes when no aging rewrite is required
+- after a successful rewrite, encode with the same declared chain
+- unsupported/malformed compression causes fail-original
 
-Compression failure during optimization causes fail-original behavior rather than partial context rewriting.
+## Responses aging adapter
 
-## Request-body transformation rule
-
-Aging operates only after the request body is safely decoded.
-
-The transformation preserves:
-
-- history item ordering
-- call/result pairing
-- all non-aged item fields
-- all non-eligible result bodies
-- request fields unrelated to aging
-
-The JSON implementation uses insertion-order-preserving maps so rewriting an eligible result does not deliberately reorder unrelated object fields.
-
-Before applying each domain decision, the transport validates the original protocol item using:
-
-- history index
-- tool-result family (`function_call_output` or `custom_tool_call_output`)
-- `call_id`
-
-If any validation, decode, parse, serialization, or re-encoding step is uncertain, the entire transformation fails original and forwards the original encoded body.
-
-## Response contract
-
-TokenSaver is not a response enhancer.
-
-Responses from the native upstream are streamed back without semantic transformation.
-
-The relay may perform only transport mechanics such as:
-
-- status/header relay
-- hop-by-hop header filtering
-- streaming body relay
-- connection/cancellation lifecycle
-
-TokenSaver must not rewrite model text, tool calls, or completion content.
-
-## Hard OFF mode
-
-When aging is disabled, the loopback transport may remain connected, but it performs no aging rewrite.
-
-The original encoded body is used directly. OFF mode is the semantic baseline for later validation.
-
-Intended final validation:
+Processing order:
 
 ```text
-request through TokenSaver OFF
-vs.
-request through TokenSaver ON
+receive
+  ↓
+authenticate capability
+  ↓
+validate path / method / content type
+  ↓
+detect compaction bypass
+  ↓
+decode if aging inspection is needed
+  ↓
+parse Responses JSON
+  ↓
+normalize only recognized history shapes
+  ↓
+run pure aging domain
+  ↓
+validate index + result kind + call_id
+  ↓
+replace only approved output fields
+  ↓
+serialize / re-encode
+  ↓
+forward to preserved first-party upstream
 ```
 
-After normalizing unavoidable transport framing, the only semantic JSON differences in the ON version may be explicitly eligible aged tool-result bodies.
+Recognized history shapes are deliberately narrow. Unknown or mixed-media forms are not guessed into eligibility.
 
-## Observability contract
+The rewritten JSON representation preserves object insertion order. If decode, parse, normalization, replacement validation, serialization, or re-encoding cannot complete safely, the entire optimization fails original and uses the original encoded request bytes.
 
-Transport emits only content-free optimization evidence:
+## Conversation compaction
 
-- optimizer outcome
-- result counts
-- largest evaluated result size
-- bytes before/after/saved
+`responses/compact` is never aged before forwarding. The native compaction service must see the original tool-result history rather than TokenSaver receipts.
 
-Outcome distinguishes at least:
+## Hard OFF
+
+When saving is disabled:
+
+- the loopback transport may remain connected
+- aging is not run
+- the original encoded body is forwarded directly
+
+OFF is the semantic baseline for final ON/OFF comparison.
+
+## Response relay
+
+Upstream response status, allowed headers, and streaming body are relayed without rewriting model content or tool calls. Hop-by-hop framing headers are removed where required for the local HTTP relay.
+
+Cancellation is expected to propagate through normal client/body-stream connection lifecycle and must be verified in the final live test pass.
+
+## Observability
+
+Transport emits content-free evidence only:
 
 - disabled
 - compaction bypass
+- fail-original
 - evaluated/no eligible result
 - evaluated/no savings
 - aged
-- fail-original
+- numeric aging statistics
 
-Transport observations must never contain original tool-result bodies or compact receipts. Application code maps these observations into telemetry.
+No original tool-result body, receipt body, bearer credential, account ID value, or capability secret is emitted as telemetry.
 
 ## Compatibility rule
 
-TokenSaver must maintain an explicit supported Codex version/configuration baseline once real integration begins.
+On an unknown/unsupported Codex configuration:
 
-For an unsupported or unknown Codex configuration:
-
-- do not guess config keys
-- do not rewrite unknown config structures
+- do not guess new config keys
+- do not overwrite unknown config structures
 - do not claim Connected
-- report the compatibility problem
-- preserve the user's existing configuration
+- preserve user state and report the compatibility issue
 
-## Phase 3 deferred validation suite
+## Deferred validation suite
 
-The following test sources are authored or required, but execution is intentionally deferred until the user requests the final validation pass:
+Test sources have been or will be authored for:
 
-1. root `openai_base_url` connect/disconnect round-trip
-2. unrelated Codex config remains intact
-3. restoration of a pre-existing `openai_base_url`
-4. config drift refuses overwrite
-5. capability path rejects wrong callers
-6. browser-origin requests are rejected
-7. native upstream header allow-list excludes arbitrary headers
-8. aging OFF preserves original encoded request body
-9. conversation compaction preserves original encoded body
-10. aging ON changes only eligible historical tool-result output fields
-11. mixed/image output remains unchanged
-12. gzip/x-gzip/deflate/Brotli/Zstandard adapter round-trip
-13. unsupported compression fails original
-14. restart reuses the persisted port and capability
-15. final real-Codex smoke test and stream/cancellation behavior
+1. Codex-home resolution
+2. root `openai_base_url` connect/disconnect
+3. unrelated config preservation
+4. pre-existing base URL restoration
+5. drift refusal
+6. crash/restart endpoint reuse
+7. capability authentication
+8. browser-origin rejection
+9. header allow-listing
+10. account-scoped vs API-key upstream selection
+11. OFF byte preservation
+12. compact bypass byte preservation
+13. ON semantic diff limited to eligible output
+14. mixed/image output preservation
+15. gzip/x-gzip/deflate/Brotli/zstd adapter round-trip
+16. unsupported compression fail-original
+17. real installed Codex smoke test
+18. real streamed tool-call turn
+19. live cancellation behavior
+20. authoritative auth/header behavior
 
-No Phase 3 test/build/lint/formatter/CI command is to be executed during implementation unless the user explicitly requests the final validation pass.
+Per project instruction, no test/build/lint/formatter/CI command is executed during implementation. Final validation runs only when the user explicitly requests it.
