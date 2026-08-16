@@ -11,6 +11,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+const PINNED_CODEX_BASELINE: &str = "9ded177ce7c1c0bd2047f902936c177612ab3434";
+// Populate only after the exact reported CLI version has passed the release
+// validation suite against TokenSaver. An empty list intentionally means that
+// no installed Codex build is yet release-certified.
+const VALIDATED_CODEX_CLI_VERSIONS: &[&str] = &[];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DiagnosticSeverity {
     Pass,
@@ -62,12 +68,25 @@ pub(crate) fn codex_cli_check() -> DiagnosticCheck {
     match Command::new(&path).arg("--version").output() {
         Ok(output) if output.status.success() => {
             let version = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-            let version = if version.is_empty() {
-                "version command succeeded".to_owned()
+            if version.is_empty() {
+                return DiagnosticCheck::warning(
+                    "codex-cli",
+                    "Codex version command succeeded but returned no version identity",
+                );
+            }
+            if VALIDATED_CODEX_CLI_VERSIONS.contains(&version.as_str()) {
+                DiagnosticCheck::pass(
+                    "codex-cli",
+                    format!("{version}; release-validated against TokenSaver protocol baseline"),
+                )
             } else {
-                version
-            };
-            DiagnosticCheck::pass("codex-cli", version)
+                DiagnosticCheck::warning(
+                    "codex-cli",
+                    format!(
+                        "{version}; this exact Codex build has not yet passed TokenSaver release validation (protocol baseline {PINNED_CODEX_BASELINE})"
+                    ),
+                )
+            }
         }
         Ok(output) => DiagnosticCheck::warning(
             "codex-cli",
