@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -156,9 +156,5 @@ impl DurableSavingsStore {
         atomic_write_private(&self.path, &serialized)?;
         self.dirty = false;
         Ok(())
-    }
-
-    pub(crate) fn path(&self) -> &Path {
-        &self.path
     }
 }
