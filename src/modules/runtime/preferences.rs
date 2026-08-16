@@ -1,7 +1,7 @@
 use std::fmt;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +13,11 @@ const PREFERENCES_SCHEMA_VERSION: u32 = 1;
 pub(crate) struct RuntimePreferences {
     schema_version: u32,
     pub(crate) saving_enabled: bool,
+    /// User intent, distinct from the temporary Codex config snapshot. Safe app
+    /// shutdown restores Codex configuration but preserves this preference so a
+    /// later launch/start-at-login can reconnect automatically.
+    #[serde(default)]
+    pub(crate) connect_on_launch: bool,
 }
 
 impl Default for RuntimePreferences {
@@ -20,6 +25,7 @@ impl Default for RuntimePreferences {
         Self {
             schema_version: PREFERENCES_SCHEMA_VERSION,
             saving_enabled: true,
+            connect_on_launch: false,
         }
     }
 }
@@ -96,14 +102,18 @@ impl RuntimePreferencesStore {
         self.save()
     }
 
+    pub(crate) fn set_connect_on_launch(
+        &mut self,
+        enabled: bool,
+    ) -> Result<(), RuntimePreferencesError> {
+        self.preferences.connect_on_launch = enabled;
+        self.save()
+    }
+
     fn save(&self) -> Result<(), RuntimePreferencesError> {
         let serialized = serde_json::to_string_pretty(&self.preferences)
             .map_err(|error| RuntimePreferencesError::InvalidJson(error.to_string()))?;
         atomic_write_private(&self.path, &serialized)?;
         Ok(())
-    }
-
-    pub(crate) fn path(&self) -> &Path {
-        &self.path
     }
 }
