@@ -3,6 +3,7 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::{to_bytes, Body};
 use axum::extract::State;
@@ -23,14 +24,16 @@ use super::request::prepare_responses_body;
 
 const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 const OPENAI_API_BASE_URL: &str = "https://api.openai.com/v1";
-const MAX_ENCODED_BODY_BYTES: usize = 256 * 1024 * 1024;
+const MAX_ENCODED_BODY_BYTES: usize = 64 * 1024 * 1024;
+const MAX_CONCURRENT_REQUESTS: usize = 16;
+const UPSTREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Debug)]
 pub(crate) struct TransportSettings {
     pub(crate) bind_port: u16,
     pub(crate) capability: CallerCapability,
     pub(crate) aging_policy: AgingPolicy,
-    pub(crate) observer: Option<mpsc::UnboundedSender<TransportObservation>>,
+    pub(crate) observer: Option<mpsc::Sender<TransportObservation>>,
 }
 
 impl TransportSettings {
@@ -57,7 +60,7 @@ impl TransportSettings {
 
     pub(crate) fn with_observer(
         mut self,
-        observer: mpsc::UnboundedSender<TransportObservation>,
+        observer: mpsc::Sender<TransportObservation>,
     ) -> Self {
         self.observer = Some(observer);
         self
@@ -126,6 +129,8 @@ impl BoundTransport {
         let draining = Arc::new(AtomicBool::new(false));
         let client = reqwest::Client::builder()
             .redirect(Policy::none())
+            .connect_timeout(UPSTREAM_CONNECT_TIMEOUT)
+            .tcp_keepalive(Duration::from_secs(30))
             .build()
             .map_err(TransportError::ClientBuild)?;
         let state = Arc::new(ServerState {
@@ -171,7 +176,7 @@ struct ServerState {
     aging_policy: Arc<RwLock<AgingPolicy>>,
     active_requests: Arc<AtomicUsize>,
     draining: Arc<AtomicBool>,
-    observer: Option<mpsc::UnboundedSender<TransportObservation>>,
+    observer: Option<mpsc::Sender<TransportObservation>>,
     client: reqwest::Client,
 }
 
@@ -180,9 +185,13 @@ struct ActiveRequestGuard {
 }
 
 impl ActiveRequestGuard {
-    fn enter(counter: Arc<AtomicUsize>) -> Self {
-        counter.fetch_add(1, Ordering::AcqRel);
-        Self { counter }
+    fn try_enter(counter: Arc<AtomicUsize>) -> Option<Self> {
+        counter
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current < MAX_CONCURRENT_REQUESTS).then_some(current + 1)
+            })
+            .ok()?;
+        Some(Self { counter })
     }
 }
 
@@ -261,11 +270,16 @@ async fn handle_request(
     if route.method == Method::POST && !is_json_request(request.headers()) {
         return empty_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
+    if encoded_content_length_exceeds_limit(request.headers()) {
+        return empty_response(StatusCode::PAYLOAD_TOO_LARGE);
+    }
     if state.draining.load(Ordering::Acquire) {
         return empty_response(StatusCode::SERVICE_UNAVAILABLE);
     }
 
-    let active_request = ActiveRequestGuard::enter(state.active_requests.clone());
+    let Some(active_request) = ActiveRequestGuard::try_enter(state.active_requests.clone()) else {
+        return empty_response(StatusCode::TOO_MANY_REQUESTS);
+    };
     // Close the check/increment race with begin_drain(): a request that entered
     // while draining flipped to true is rejected before it can reach upstream.
     if state.draining.load(Ordering::Acquire) {
@@ -299,7 +313,9 @@ async fn handle_request(
     );
 
     if let Some(observer) = &state.observer {
-        let _ = observer.send(TransportObservation {
+        // Telemetry is best-effort and content-free. A stuck consumer must not
+        // create an unbounded memory queue or delay native Codex traffic.
+        let _ = observer.try_send(TransportObservation {
             outcome: prepared.outcome,
             aging_stats: prepared.aging.stats.clone(),
         });
@@ -333,6 +349,14 @@ async fn handle_request(
     };
 
     relay_response(upstream, active_request)
+}
+
+fn encoded_content_length_exceeds_limit(headers: &HeaderMap) -> bool {
+    headers
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .is_some_and(|value| value > MAX_ENCODED_BODY_BYTES as u64)
 }
 
 fn native_upstream_base_url(headers: &HeaderMap) -> &'static str {
@@ -439,9 +463,13 @@ fn empty_response(status: StatusCode) -> Response<Body> {
 
 #[cfg(test)]
 mod routing_tests {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
+
     use super::{
-        native_route, native_upstream_base_url, upstream_path, NativeRouteKind,
-        CHATGPT_CODEX_BASE_URL, OPENAI_API_BASE_URL,
+        encoded_content_length_exceeds_limit, native_route, native_upstream_base_url,
+        upstream_path, ActiveRequestGuard, NativeRouteKind, CHATGPT_CODEX_BASE_URL,
+        MAX_CONCURRENT_REQUESTS, MAX_ENCODED_BODY_BYTES, OPENAI_API_BASE_URL,
     };
     use axum::http::{HeaderMap, HeaderValue, Method};
 
@@ -481,5 +509,27 @@ mod routing_tests {
 
         assert!(native_route("/v1/realtime/calls").is_none());
         assert!(native_route("/v1/arbitrary-proxy-target").is_none());
+    }
+
+    #[test]
+    fn encoded_content_length_is_rejected_before_body_collection() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "content-length",
+            HeaderValue::from_str(&(MAX_ENCODED_BODY_BYTES as u64 + 1).to_string())
+                .expect("content length"),
+        );
+        assert!(encoded_content_length_exceeds_limit(&headers));
+    }
+
+    #[test]
+    fn concurrent_request_guard_is_strictly_bounded() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let guards = (0..MAX_CONCURRENT_REQUESTS)
+            .map(|_| ActiveRequestGuard::try_enter(counter.clone()).expect("slot"))
+            .collect::<Vec<_>>();
+        assert!(ActiveRequestGuard::try_enter(counter.clone()).is_none());
+        drop(guards);
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Acquire), 0);
     }
 }
