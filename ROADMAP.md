@@ -309,21 +309,26 @@ Writes use the existing atomic private-file primitive and are periodically flush
 
 ## 5.5 Runtime preferences — implemented
 
-`runtime-preferences.json` persists:
+`runtime-preferences.json` schema v2 persists:
 
 - `saving_enabled`
 - `connect_on_launch`
+- `min_bytes`
+- `frontier`
+- `preview_code_units`
 
 Behavior:
 
 - first launch defaults to Codex disconnected, saving enabled
+- initial aging policy remains 32 KiB / frontier 4 / preview 1024 code units
+- schema v1 preference files receive the original defaults for new policy fields
 - explicit **Connect to Codex** sets `connect_on_launch = true`
 - explicit **Disconnect from Codex** safely restores config and sets it false
 - normal safe Quit restores config but preserves connection intent
 - later app launch / Start at Login reconnects when that intent is true
 - crash snapshot recovery remains authoritative when a Phase 3 snapshot survived
 
-Saving toggle changes are persisted and also update the live transport policy when connected.
+Saving toggle changes are persisted and also update the live transport policy when connected. Structural threshold/frontier/preview changes are applied only while disconnected so one connected session cannot silently change its aging policy midstream.
 
 ## 5.6 Start at Login — implemented
 
@@ -400,9 +405,37 @@ Still requiring the user's final validation pass:
 
 # Phase 6 — CLI and diagnostics
 
-**Status: NOT STARTED**
+**Status: IMPLEMENTED — VALIDATION DEFERRED**
 
-Planned commands:
+Authoritative document: `docs/CLI.md`.
+
+Goal: expose a narrow terminal surface for status, control, persisted optimization settings/statistics, and redacted health diagnostics without creating a second proxy/runtime.
+
+## 6.1 Unified binary dispatch — implemented
+
+The same TokenSaver binary now has two product edges:
+
+- no CLI command → windowless menu-bar application
+- CLI command → terminal mode without constructing the Tauri UI
+
+macOS Finder process-serial-number arguments remain treated as desktop launch rather than an accidental CLI command.
+
+## 6.2 Owner-local runtime control channel — implemented
+
+Live mutation commands reach the single menu-bar runtime through an owner-local Unix socket rather than starting another proxy process.
+
+Implemented safeguards:
+
+- finite JSON control protocol only
+- no arbitrary shell-command execution
+- per-user application-data location
+- `0700` parent directory and `0600` socket on Unix
+- bounded request/response size
+- stale socket replacement only when no live runtime answers it
+- runtime action responses contain only application DTOs
+- no tool-result body, receipt body, bearer credential, account ID, or Codex capability in the control protocol
+
+## 6.3 CLI commands — implemented
 
 ```text
 tokensaver status
@@ -412,12 +445,79 @@ tokensaver saving on
 tokensaver saving off
 tokensaver stats
 tokensaver config show
-tokensaver config set min-bytes ...
-tokensaver config set frontier ...
+tokensaver config set min-bytes <bytes>
+tokensaver config set frontier <count>
+tokensaver config set preview-code-units <count>
 tokensaver doctor
+tokensaver version
 ```
 
-`doctor` should verify Codex compatibility, loopback state, config ownership/drift, upstream reachability, saving state, last optimizer activity, autostart state, and local file permissions while redacting credentials/capabilities/result bodies.
+Behavior:
+
+- `connect`, `disconnect`, and `saving` require the live menu-bar runtime
+- `stats` uses live session data when available and persisted content-free counters while closed
+- `config show` works live or offline
+- numeric policy changes work offline or through the live runtime while Codex is disconnected
+- structural policy changes are refused while Codex is connected
+- saving on/off remains live-switchable
+- measured bytes and approximate token estimates remain labeled separately
+
+## 6.4 Persistent policy schema — implemented
+
+Runtime preferences schema v2 adds the optimization-policy values to the same owner-private preference source.
+
+Guardrails:
+
+- `min_bytes > 0`
+- `frontier <= 256`
+- `preview_code_units` in `64..=16384`
+- v1 preferences remain readable and receive conservative defaults for new fields
+
+## 6.5 Doctor — implemented
+
+`tokensaver doctor` emits redacted PASS/WARN/FAIL checks for:
+
+- Codex CLI discovery/version when available
+- TokenSaver application-data privacy
+- runtime-preference privacy
+- savings-store privacy
+- restoration snapshot privacy and snapshot/config coherence
+- Codex config resolution/readability
+- live TokenSaver runtime/control-channel reachability
+- first-party ChatGPT Codex host reachability
+- first-party OpenAI API host reachability
+
+HTTP reachability means a first-party host returned an HTTP response; it does not claim authenticated inference success.
+
+The authoritative Start-at-Login state remains the Tauri autostart plugin state surfaced by the tray. Doctor deliberately does not guess undocumented LaunchAgent plist naming or infer plugin state from filesystem heuristics.
+
+## 6.6 Architecture boundary — implemented
+
+CLI code imports application services only. Architecture-contract source now explicitly rejects `src/cli -> crate::modules::*` and `src/cli -> crate::shared::*` dependencies.
+
+Cross-module diagnostics, settings, persisted stats, and control-socket path resolution remain behind application services.
+
+## Phase 6 deferred validation
+
+Still requiring the user's final validation pass:
+
+- compile/test/lint/format
+- CLI help/version smoke
+- status with runtime running/stopped
+- live connect/disconnect/saving commands
+- active-request disconnect refusal through CLI
+- live/offline stats consistency
+- v1 → v2 preference migration
+- config value validation
+- connected structural-policy-change refusal
+- stale control-socket recovery
+- socket permission checks
+- doctor with runtime running/stopped
+- first-party reachability behavior under normal/offline network conditions
+- redaction/privacy review of all CLI/doctor output
+- CLI architecture-contract execution
+
+**No test/build/lint/formatter/CI, CLI smoke, doctor, network-probe, or live runtime validation command has been executed.**
 
 ---
 
@@ -483,13 +583,14 @@ Final release gates:
 5. transport integration suite
 6. config restoration/drift suite
 7. desktop runtime/tray suite
-8. real Codex smoke test
-9. compaction-bypass test
-10. ON/OFF payload-diff invariant
-11. tray/backend state consistency
-12. privacy/log/UI-redaction
-13. install/uninstall round trip
-14. realistic long-session savings + quality benchmark
+8. CLI/doctor suite
+9. real Codex smoke test
+10. compaction-bypass test
+11. ON/OFF payload-diff invariant
+12. tray/backend state consistency
+13. privacy/log/UI/CLI redaction
+14. install/uninstall round trip
+15. realistic long-session savings + quality benchmark
 
 ---
 
