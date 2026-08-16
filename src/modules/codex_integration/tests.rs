@@ -2,8 +2,8 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use super::config::{
-    connect_config_text, connection_state_text, disconnect_config_text, CodexConfigError,
-    CodexConnectionState, OriginalOpenAiBaseUrl,
+    CodexConfigError, CodexConnectionState, OriginalOpenAiBaseUrl, connect_config_text,
+    connection_state_text, disconnect_config_text,
 };
 use super::path::resolve_codex_config_path;
 
@@ -22,10 +22,13 @@ fn connect_preserves_unrelated_config_and_installs_owned_native_overrides() {
     assert!(connected.contains(
         "experimental_realtime_webrtc_call_base_url = \"https://chatgpt.com/backend-api/codex\""
     ));
-    assert!(connected.contains(
-        "experimental_realtime_ws_base_url = \"https://api.openai.com/v1\""
-    ));
-    assert_eq!(snapshot.original_openai_base_url, OriginalOpenAiBaseUrl::Absent);
+    assert!(
+        connected.contains("experimental_realtime_ws_base_url = \"https://api.openai.com/v1\"")
+    );
+    assert_eq!(
+        snapshot.original_openai_base_url,
+        OriginalOpenAiBaseUrl::Absent
+    );
     assert_eq!(
         snapshot.installed_realtime_call_base_url.as_deref(),
         Some("https://chatgpt.com/backend-api/codex")
@@ -69,22 +72,22 @@ fn existing_user_realtime_values_are_never_owned_or_changed() {
     );
     let (connected, snapshot) = connect_config_text(source, ENDPOINT).expect("connect config");
 
-    assert!(connected.contains(
-        "experimental_realtime_webrtc_call_base_url = \"https://voice.example/calls\""
-    ));
-    assert!(connected.contains(
-        "experimental_realtime_ws_base_url = \"https://voice.example/ws\""
-    ));
+    assert!(
+        connected.contains(
+            "experimental_realtime_webrtc_call_base_url = \"https://voice.example/calls\""
+        )
+    );
+    assert!(connected.contains("experimental_realtime_ws_base_url = \"https://voice.example/ws\""));
     assert!(snapshot.installed_realtime_call_base_url.is_none());
     assert!(snapshot.installed_realtime_ws_base_url.is_none());
 
     let restored = disconnect_config_text(&connected, &snapshot).expect("disconnect config");
-    assert!(restored.contains(
-        "experimental_realtime_webrtc_call_base_url = \"https://voice.example/calls\""
-    ));
-    assert!(restored.contains(
-        "experimental_realtime_ws_base_url = \"https://voice.example/ws\""
-    ));
+    assert!(
+        restored.contains(
+            "experimental_realtime_webrtc_call_base_url = \"https://voice.example/calls\""
+        )
+    );
+    assert!(restored.contains("experimental_realtime_ws_base_url = \"https://voice.example/ws\""));
 }
 
 #[test]
@@ -205,8 +208,8 @@ fn codex_home_environment_matches_codex_resolution_rule() {
     let temp = std::env::temp_dir().join(format!("tokensaver-path-test-{}", std::process::id()));
     std::fs::create_dir_all(&temp).expect("create temp home");
 
-    let resolved = resolve_codex_config_path(Some(OsString::from(&temp)), None)
-        .expect("resolve CODEX_HOME");
+    let resolved =
+        resolve_codex_config_path(Some(OsString::from(&temp)), None).expect("resolve CODEX_HOME");
     let canonical = temp.canonicalize().expect("canonical temp");
     assert_eq!(resolved, canonical.join("config.toml"));
 

@@ -1,9 +1,9 @@
 use std::fmt;
 use std::io::{self, Cursor, Read, Write};
 
+use flate2::Compression;
 use flate2::read::{GzDecoder, ZlibDecoder};
 use flate2::write::{GzEncoder, ZlibEncoder};
-use flate2::Compression;
 
 pub(crate) const MAX_DECODED_BODY_BYTES: usize = 256 * 1024 * 1024;
 

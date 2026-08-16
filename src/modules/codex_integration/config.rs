@@ -4,7 +4,7 @@ use std::io;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use toml_edit::{value, DocumentMut, Item};
+use toml_edit::{DocumentMut, Item, value};
 
 use crate::shared::filesystem::atomic_write_private;
 
@@ -70,10 +70,16 @@ impl fmt::Display for CodexConfigError {
         match self {
             Self::InvalidToml(_) => write!(formatter, "Codex config TOML is invalid"),
             Self::UnsupportedOpenAiBaseUrlType => {
-                write!(formatter, "Codex openai_base_url must be a string when present")
+                write!(
+                    formatter,
+                    "Codex openai_base_url must be a string when present"
+                )
             }
             Self::UnsupportedChatGptBaseUrlType => {
-                write!(formatter, "Codex chatgpt_base_url must be a string when present")
+                write!(
+                    formatter,
+                    "Codex chatgpt_base_url must be a string when present"
+                )
             }
             Self::UnsafeLoopbackUrl(_) => write!(
                 formatter,
@@ -83,7 +89,10 @@ impl fmt::Display for CodexConfigError {
                 write!(formatter, "TokenSaver config snapshot is invalid")
             }
             Self::UnsupportedSnapshotVersion(version) => {
-                write!(formatter, "unsupported TokenSaver config snapshot version: {version}")
+                write!(
+                    formatter,
+                    "unsupported TokenSaver config snapshot version: {version}"
+                )
             }
             Self::ActiveSnapshotDifferentEndpoint { .. } => write!(
                 formatter,
@@ -318,19 +327,32 @@ pub(super) fn connection_state_text(
     }
 
     let original_openai_matches = match &snapshot.original_openai_base_url {
-        OriginalOpenAiBaseUrl::Absent => read_optional_string(&document, OPENAI_BASE_URL_KEY)?.is_none(),
+        OriginalOpenAiBaseUrl::Absent => {
+            read_optional_string(&document, OPENAI_BASE_URL_KEY)?.is_none()
+        }
         OriginalOpenAiBaseUrl::Value(original) => {
-            read_optional_string(&document, OPENAI_BASE_URL_KEY)?.as_deref() == Some(original.as_str())
+            read_optional_string(&document, OPENAI_BASE_URL_KEY)?.as_deref()
+                == Some(original.as_str())
         }
     };
     let installed_realtime_absent = snapshot
         .installed_realtime_call_base_url
         .as_ref()
-        .is_none_or(|_| read_optional_string(&document, REALTIME_CALL_BASE_URL_KEY).ok().flatten().is_none())
+        .is_none_or(|_| {
+            read_optional_string(&document, REALTIME_CALL_BASE_URL_KEY)
+                .ok()
+                .flatten()
+                .is_none()
+        })
         && snapshot
             .installed_realtime_ws_base_url
             .as_ref()
-            .is_none_or(|_| read_optional_string(&document, REALTIME_WS_BASE_URL_KEY).ok().flatten().is_none());
+            .is_none_or(|_| {
+                read_optional_string(&document, REALTIME_WS_BASE_URL_KEY)
+                    .ok()
+                    .flatten()
+                    .is_none()
+            });
 
     Ok(if original_openai_matches && installed_realtime_absent {
         CodexConnectionState::NotConnected
@@ -366,17 +388,20 @@ fn read_optional_string(
 ) -> Result<Option<String>, CodexConfigError> {
     match document.get(key) {
         None | Some(Item::None) => Ok(None),
-        Some(item) => item.as_str().map(|value| Some(value.to_owned())).ok_or_else(|| {
-            if key == CHATGPT_BASE_URL_KEY {
-                CodexConfigError::UnsupportedChatGptBaseUrlType
-            } else {
-                CodexConfigError::Drift {
-                    key,
-                    expected: None,
-                    actual: None,
+        Some(item) => item
+            .as_str()
+            .map(|value| Some(value.to_owned()))
+            .ok_or_else(|| {
+                if key == CHATGPT_BASE_URL_KEY {
+                    CodexConfigError::UnsupportedChatGptBaseUrlType
+                } else {
+                    CodexConfigError::Drift {
+                        key,
+                        expected: None,
+                        actual: None,
+                    }
                 }
-            }
-        }),
+            }),
     }
 }
 
@@ -391,7 +416,11 @@ fn native_realtime_call_base_url(document: &DocumentMut) -> Result<String, Codex
     })
 }
 
-fn install_if_absent(document: &mut DocumentMut, key: &'static str, installed: &str) -> Option<String> {
+fn install_if_absent(
+    document: &mut DocumentMut,
+    key: &'static str,
+    installed: &str,
+) -> Option<String> {
     if document.get(key).is_some() {
         return None;
     }

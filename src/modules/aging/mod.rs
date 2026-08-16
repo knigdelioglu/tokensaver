@@ -15,15 +15,15 @@ mod policy;
 mod receipt;
 
 pub(crate) use engine::{
-    age_tool_results, AgedReplacement, AgingDecision, AgingResult, AgingSkipReason, AgingStats,
-    ToolResultEvaluation,
+    AgedReplacement, AgingDecision, AgingResult, AgingSkipReason, AgingStats, ToolResultEvaluation,
+    age_tool_results,
 };
 pub(crate) use model::{HistoryItem, ToolOutput, ToolResultKind};
 pub(crate) use policy::{
     AgingPolicy, DEFAULT_FRONTIER, DEFAULT_MIN_BYTES, DEFAULT_PREVIEW_CODE_UNITS,
 };
 pub(crate) use receipt::{
-    parse_receipt, verify_exact_candidate, ReceiptEvidence, ReceiptParseError,
+    ReceiptEvidence, ReceiptParseError, parse_receipt, verify_exact_candidate,
 };
 
 #[cfg(test)]

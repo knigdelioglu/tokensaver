@@ -1,4 +1,4 @@
-use super::control::{send_control_request, ControlError, ControlRequest, ControlResponse};
+use super::control::{ControlError, ControlRequest, ControlResponse, send_control_request};
 use crate::shared::paths::control_socket_path;
 
 /// Product-edge client for the single live TokenSaver runtime. CLI code uses

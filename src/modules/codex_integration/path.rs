@@ -24,7 +24,11 @@ impl fmt::Display for CodexPathError {
                 write!(formatter, "CODEX_HOME does not exist: {}", path.display())
             }
             Self::CodexHomeNotDirectory(path) => {
-                write!(formatter, "CODEX_HOME is not a directory: {}", path.display())
+                write!(
+                    formatter,
+                    "CODEX_HOME is not a directory: {}",
+                    path.display()
+                )
             }
             Self::Io(error) => write!(formatter, "failed to resolve Codex home: {error}"),
         }

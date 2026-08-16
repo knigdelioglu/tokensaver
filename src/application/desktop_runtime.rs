@@ -6,16 +6,14 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Local;
-use rand::rngs::OsRng;
 use rand::RngCore;
+use rand::rngs::OsRng;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 use crate::modules::aging::AgingPolicy;
-use crate::modules::codex_integration::{
-    connection_state_with_snapshot, CodexConnectionState,
-};
+use crate::modules::codex_integration::{CodexConnectionState, connection_state_with_snapshot};
 use crate::modules::runtime::{
     CodexStatus, RuntimePreferences, RuntimePreferencesError, RuntimePreferencesStore,
     RuntimeStatusStore, ServiceStatus,
@@ -27,8 +25,8 @@ use crate::modules::transport::TransportControl;
 use crate::shared::paths::control_socket_path;
 
 use super::codex_connection::{
-    disconnect_native_codex, prepare_native_codex_connection, CodexConnectionError,
-    CodexConnectionRecord, PreparedCodexConnection,
+    CodexConnectionError, CodexConnectionRecord, PreparedCodexConnection, disconnect_native_codex,
+    prepare_native_codex_connection,
 };
 use super::control::serve_control_socket;
 use super::measurement::event_from_transport_observation;
@@ -217,7 +215,12 @@ impl DesktopRuntimeController {
     }
 
     pub(crate) async fn initialize(&self) {
-        let connect_on_launch = self.preferences.lock().await.preferences().connect_on_launch;
+        let connect_on_launch = self
+            .preferences
+            .lock()
+            .await
+            .preferences()
+            .connect_on_launch;
         if self.snapshot_path.exists() || connect_on_launch {
             if let Err(error) = self.connect().await {
                 self.status.update(|runtime| {
@@ -266,10 +269,7 @@ impl DesktopRuntimeController {
             return Ok(());
         }
 
-        self.preferences
-            .lock()
-            .await
-            .set_connect_on_launch(true)?;
+        self.preferences.lock().await.set_connect_on_launch(true)?;
         self.status.update(|runtime| {
             runtime.service = ServiceStatus::Starting;
             runtime.codex = CodexStatus::Connecting;
@@ -325,10 +325,7 @@ impl DesktopRuntimeController {
                     None,
                 );
                 session_ledger.lock().await.record(event);
-                durable_savings
-                    .lock()
-                    .await
-                    .record(event, &local_day_key());
+                durable_savings.lock().await.record(event, &local_day_key());
             }
         });
 
@@ -369,10 +366,7 @@ impl DesktopRuntimeController {
 
         let Some((record, control)) = active else {
             if clear_connect_preference {
-                self.preferences
-                    .lock()
-                    .await
-                    .set_connect_on_launch(false)?;
+                self.preferences.lock().await.set_connect_on_launch(false)?;
             }
             self.status.update(|runtime| {
                 runtime.service = ServiceStatus::Running;
@@ -386,7 +380,8 @@ impl DesktopRuntimeController {
         let active_requests = control.begin_drain();
         if active_requests > 0 {
             control.resume_accepting();
-            self.status.update(|runtime| runtime.active_requests = active_requests);
+            self.status
+                .update(|runtime| runtime.active_requests = active_requests);
             return Err(DesktopRuntimeError::ActiveRequests(active_requests));
         }
 
@@ -418,10 +413,7 @@ impl DesktopRuntimeController {
         }
 
         if clear_connect_preference {
-            self.preferences
-                .lock()
-                .await
-                .set_connect_on_launch(false)?;
+            self.preferences.lock().await.set_connect_on_launch(false)?;
         }
         self.status.update(|runtime| {
             runtime.service = ServiceStatus::Running;
@@ -438,13 +430,13 @@ impl DesktopRuntimeController {
         enabled: bool,
     ) -> Result<(), DesktopRuntimeError> {
         let _operation = self.operation.lock().await;
-        self.preferences
-            .lock()
-            .await
-            .set_saving_enabled(enabled)?;
+        self.preferences.lock().await.set_saving_enabled(enabled)?;
         let control = {
             let inner = self.inner.lock().await;
-            inner.connection.as_ref().map(|active| active.control.clone())
+            inner
+                .connection
+                .as_ref()
+                .map(|active| active.control.clone())
         };
         if let Some(control) = control {
             control.set_aging_enabled(enabled).await;
@@ -508,10 +500,8 @@ impl DesktopRuntimeController {
             return;
         };
 
-        let connection_state = connection_state_with_snapshot(
-            &record.config_path,
-            &record.snapshot_path,
-        );
+        let connection_state =
+            connection_state_with_snapshot(&record.config_path, &record.snapshot_path);
         self.status.update(|runtime| {
             runtime.active_requests = control.active_requests();
             match connection_state {
@@ -557,7 +547,11 @@ impl DesktopRuntimeController {
         let local_day = local_day_key();
         let runtime = self.status.snapshot();
         let preferences = self.preferences.lock().await.preferences();
-        let session = self.session_ledger.lock().await.for_session(self.session_id);
+        let session = self
+            .session_ledger
+            .lock()
+            .await
+            .for_session(self.session_id);
         let savings = self.durable_savings.lock().await;
 
         DesktopRuntimeSnapshot {

@@ -1,6 +1,6 @@
 use crate::modules::aging::{
-    age_tool_results, AgingDecision, AgingPolicy, AgingSkipReason, AgingStats, HistoryItem,
-    ToolOutput, ToolResultKind,
+    AgingDecision, AgingPolicy, AgingSkipReason, AgingStats, HistoryItem, ToolOutput,
+    ToolResultKind, age_tool_results,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -216,17 +216,18 @@ fn unconsumed_history() -> Vec<HistoryItem> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        run_builtin_fixture, BenchmarkDecision, BenchmarkFixtureKind,
-    };
+    use super::{BenchmarkDecision, BenchmarkFixtureKind, run_builtin_fixture};
     use crate::modules::aging::AgingPolicy;
 
     #[test]
     fn large_consumed_fixture_reports_aging() {
         let report = run_builtin_fixture(BenchmarkFixtureKind::TestLog, AgingPolicy::default());
-        assert!(report.evaluations.iter().any(|evaluation| {
-            evaluation.decision == BenchmarkDecision::Aged
-        }));
+        assert!(
+            report
+                .evaluations
+                .iter()
+                .any(|evaluation| { evaluation.decision == BenchmarkDecision::Aged })
+        );
         assert!(report.stats.tool_result_bytes_saved > 0);
     }
 
@@ -236,9 +237,12 @@ mod tests {
             BenchmarkFixtureKind::ManyMediumOutputs,
             AgingPolicy::default(),
         );
-        assert!(report.evaluations.iter().any(|evaluation| {
-            evaluation.decision == BenchmarkDecision::AtOrBelowThreshold
-        }));
+        assert!(
+            report
+                .evaluations
+                .iter()
+                .any(|evaluation| { evaluation.decision == BenchmarkDecision::AtOrBelowThreshold })
+        );
     }
 
     #[test]
@@ -248,6 +252,9 @@ mod tests {
             ..AgingPolicy::default()
         };
         let report = run_builtin_fixture(BenchmarkFixtureKind::UnconsumedHistory, policy);
-        assert_eq!(report.evaluations[0].decision, BenchmarkDecision::Unconsumed);
+        assert_eq!(
+            report.evaluations[0].decision,
+            BenchmarkDecision::Unconsumed
+        );
     }
 }

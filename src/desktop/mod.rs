@@ -82,13 +82,7 @@ impl TrayUi {
             true,
             None::<&str>,
         )?;
-        let connect = MenuItem::with_id(
-            app,
-            MENU_CONNECT,
-            "Connect to Codex",
-            true,
-            None::<&str>,
-        )?;
+        let connect = MenuItem::with_id(app, MENU_CONNECT, "Connect to Codex", true, None::<&str>)?;
         let autostart = CheckMenuItem::with_id(
             app,
             MENU_AUTOSTART,
@@ -316,10 +310,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             }
 
             api.prevent_exit();
-            if state
-                .shutdown_in_progress
-                .swap(true, Ordering::AcqRel)
-            {
+            if state.shutdown_in_progress.swap(true, Ordering::AcqRel) {
                 return;
             }
 
@@ -475,7 +466,10 @@ async fn refresh_tray(
     let autostart_enabled = match app.autolaunch().is_enabled() {
         Ok(enabled) => enabled,
         Err(error) => {
-            set_shell_error(shell_error, Some(format!("Start at Login status failed: {error}")));
+            set_shell_error(
+                shell_error,
+                Some(format!("Start at Login status failed: {error}")),
+            );
             false
         }
     };
@@ -483,11 +477,7 @@ async fn refresh_tray(
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
-    if let Err(error) = tray.apply(
-        &snapshot,
-        autostart_enabled,
-        shell_error_value.as_deref(),
-    ) {
+    if let Err(error) = tray.apply(&snapshot, autostart_enabled, shell_error_value.as_deref()) {
         set_shell_error(shell_error, Some(format!("Tray update failed: {error}")));
     }
 }

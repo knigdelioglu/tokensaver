@@ -97,7 +97,10 @@ impl fmt::Display for ControlError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnsupportedPlatform => {
-                write!(formatter, "TokenSaver control socket is currently macOS/Unix only")
+                write!(
+                    formatter,
+                    "TokenSaver control socket is currently macOS/Unix only"
+                )
             }
             Self::RuntimeAlreadyActive => {
                 write!(formatter, "a TokenSaver control runtime is already active")
@@ -141,7 +144,10 @@ pub(crate) async fn serve_control_socket(
     use tokio::time::timeout;
 
     let parent = socket_path.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "control socket path has no parent")
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "control socket path has no parent",
+        )
     })?;
     fs::create_dir_all(parent)?;
     fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
@@ -179,10 +185,9 @@ pub(crate) async fn serve_control_socket(
                 }
                 Ok(Ok(_)) => match serde_json::from_str::<ControlRequest>(line.trim_end()) {
                     Ok(request) => handle_request(&controller, request).await,
-                    Err(error) => ControlResponse::failure(
-                        format!("invalid control request: {error}"),
-                        None,
-                    ),
+                    Err(error) => {
+                        ControlResponse::failure(format!("invalid control request: {error}"), None)
+                    }
                 },
                 Ok(Err(error)) => {
                     ControlResponse::failure(format!("control read failed: {error}"), None)
@@ -219,8 +224,8 @@ pub(crate) async fn send_control_request(
         .await
         .map_err(|_| ControlError::Timeout("connect"))??;
     let (reader, mut writer) = stream.into_split();
-    let mut encoded = serde_json::to_vec(request)
-        .map_err(|error| ControlError::Protocol(error.to_string()))?;
+    let mut encoded =
+        serde_json::to_vec(request).map_err(|error| ControlError::Protocol(error.to_string()))?;
     encoded.push(b'\n');
     timeout(CONTROL_IO_TIMEOUT, writer.write_all(&encoded))
         .await
@@ -235,15 +240,16 @@ pub(crate) async fn send_control_request(
         .await
         .map_err(|_| ControlError::Timeout("response read"))??;
     if line.is_empty() {
-        return Err(ControlError::Protocol("runtime returned no response".to_owned()));
+        return Err(ControlError::Protocol(
+            "runtime returned no response".to_owned(),
+        ));
     }
     if line.len() > MAX_CONTROL_MESSAGE_BYTES {
         return Err(ControlError::Protocol(
             "runtime response exceeds size limit".to_owned(),
         ));
     }
-    serde_json::from_str(line.trim_end())
-        .map_err(|error| ControlError::Protocol(error.to_string()))
+    serde_json::from_str(line.trim_end()).map_err(|error| ControlError::Protocol(error.to_string()))
 }
 
 #[cfg(not(unix))]
@@ -268,12 +274,14 @@ async fn handle_request(
             .disconnect()
             .await
             .map(|_| Some("Codex disconnected".to_owned())),
-        ControlRequest::Saving { enabled } => controller.set_saving_enabled(enabled).await.map(|_| {
-            Some(format!(
-                "token saving {}",
-                if enabled { "enabled" } else { "disabled" }
-            ))
-        }),
+        ControlRequest::Saving { enabled } => {
+            controller.set_saving_enabled(enabled).await.map(|_| {
+                Some(format!(
+                    "token saving {}",
+                    if enabled { "enabled" } else { "disabled" }
+                ))
+            })
+        }
         ControlRequest::ConfigSet { key, value } => match key.as_str() {
             "min-bytes" => controller
                 .set_min_bytes(value)

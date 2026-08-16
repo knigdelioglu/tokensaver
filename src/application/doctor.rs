@@ -1,16 +1,16 @@
 use std::path::PathBuf;
 
 use crate::modules::codex_integration::{
-    codex_config_path, connection_state_with_snapshot, load_config_snapshot, CodexConnectionState,
+    CodexConnectionState, codex_config_path, connection_state_with_snapshot, load_config_snapshot,
 };
 use crate::modules::diagnostics::{
-    codex_cli_check, first_party_reachability_check, owner_private_path_check,
-    readable_file_check, DiagnosticCheck, DiagnosticSeverity,
+    DiagnosticCheck, DiagnosticSeverity, codex_cli_check, first_party_reachability_check,
+    owner_private_path_check, readable_file_check,
 };
 use crate::shared::paths::{control_socket_path, product_data_dir};
 use crate::shared::security::redact_local_secrets;
 
-use super::control::{send_control_request, ControlRequest};
+use super::control::{ControlRequest, send_control_request};
 
 const SNAPSHOT_FILE: &str = "codex-config-snapshot.json";
 const SAVINGS_FILE: &str = "savings.json";
@@ -84,9 +84,7 @@ pub(crate) async fn run_doctor() -> DoctorReport {
     }
 
     checks.push(runtime_control_check().await);
-    checks.push(
-        first_party_reachability_check("chatgpt-upstream", CHATGPT_PROBE).await,
-    );
+    checks.push(first_party_reachability_check("chatgpt-upstream", CHATGPT_PROBE).await);
     checks.push(first_party_reachability_check("openai-upstream", OPENAI_PROBE).await);
 
     DoctorReport {

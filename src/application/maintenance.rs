@@ -170,7 +170,7 @@ mod tests {
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use super::{purge_owned_state_at, MaintenanceError};
+    use super::{MaintenanceError, purge_owned_state_at};
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
@@ -218,11 +218,7 @@ mod tests {
     fn purge_removes_known_atomic_temp_files_only() {
         let root = temp_root();
         fs::create_dir_all(&root).expect("create root");
-        fs::write(
-            root.join(".savings.json.tokensaver-11-2.tmp"),
-            "temporary",
-        )
-        .expect("known temp");
+        fs::write(root.join(".savings.json.tokensaver-11-2.tmp"), "temporary").expect("known temp");
         fs::write(root.join(".other.tokensaver-11-2.tmp"), "other").expect("other temp");
 
         let report = purge_owned_state_at(&root).expect("purge");

@@ -38,7 +38,9 @@ impl fmt::Display for ReceiptParseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingMetadata => write!(formatter, "TokenSaver receipt metadata is missing"),
-            Self::UnsupportedVersion => write!(formatter, "TokenSaver receipt version is unsupported"),
+            Self::UnsupportedVersion => {
+                write!(formatter, "TokenSaver receipt version is unsupported")
+            }
             Self::InvalidMetadata => write!(formatter, "TokenSaver receipt metadata is invalid"),
             Self::InvalidDigest => write!(formatter, "TokenSaver receipt digest is invalid"),
             Self::InvalidLayout => write!(formatter, "TokenSaver receipt layout is invalid"),
@@ -245,16 +247,18 @@ fn safe_tail(value: &str, max_utf16_units: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_receipt, parse_receipt, safe_head, safe_tail, verify_exact_candidate,
-        ReceiptParseError,
+        ReceiptParseError, build_receipt, parse_receipt, safe_head, safe_tail,
+        verify_exact_candidate,
     };
 
     #[test]
     fn sha256_identity_is_stable() {
         let receipt = build_receipt("abc", None, 1_024);
-        assert!(receipt.contains(
-            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        ));
+        assert!(
+            receipt.contains(
+                "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+            )
+        );
     }
 
     #[test]

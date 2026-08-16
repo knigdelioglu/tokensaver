@@ -206,11 +206,7 @@ fn protected_tool_result_indexes(input: &[HistoryItem], frontier: usize) -> Hash
         .filter_map(|(index, item)| item.is_tool_result().then_some(index))
         .collect::<Vec<_>>();
 
-    output_indexes
-        .into_iter()
-        .rev()
-        .take(frontier)
-        .collect()
+    output_indexes.into_iter().rev().take(frontier).collect()
 }
 
 fn call_name_map(input: &[HistoryItem]) -> HashMap<&str, &str> {

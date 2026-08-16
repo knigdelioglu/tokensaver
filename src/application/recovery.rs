@@ -1,5 +1,5 @@
 use crate::modules::aging::{
-    parse_receipt, verify_exact_candidate, ReceiptEvidence, ReceiptParseError,
+    ReceiptEvidence, ReceiptParseError, parse_receipt, verify_exact_candidate,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,10 +59,7 @@ pub(crate) fn verify_recovered_candidate(
     })
 }
 
-fn assessment_from_evidence(
-    evidence: ReceiptEvidence,
-    need: RecoveryNeed,
-) -> RecoveryAssessment {
+fn assessment_from_evidence(evidence: ReceiptEvidence, need: RecoveryNeed) -> RecoveryAssessment {
     let disposition = match need {
         RecoveryNeed::VisibleEvidenceOnly => RecoveryDisposition::ReceiptEvidenceAvailable,
         RecoveryNeed::ExactContent => RecoveryDisposition::ExactSourceRequired,
@@ -82,10 +79,12 @@ fn assessment_from_evidence(
 #[cfg(test)]
 mod tests {
     use super::{
-        assess_receipt, verify_recovered_candidate, CandidateVerification, RecoveryDisposition,
-        RecoveryNeed,
+        CandidateVerification, RecoveryDisposition, RecoveryNeed, assess_receipt,
+        verify_recovered_candidate,
     };
-    use crate::modules::aging::{age_tool_results, AgingPolicy, HistoryItem, ToolOutput, ToolResultKind};
+    use crate::modules::aging::{
+        AgingPolicy, HistoryItem, ToolOutput, ToolResultKind, age_tool_results,
+    };
 
     fn receipt_and_source() -> (String, String) {
         let source = format!(
@@ -120,7 +119,10 @@ mod tests {
         let (receipt, _) = receipt_and_source();
         let assessment = assess_receipt(&receipt, RecoveryNeed::ExactContent).expect("assessment");
 
-        assert_eq!(assessment.disposition, RecoveryDisposition::ExactSourceRequired);
+        assert_eq!(
+            assessment.disposition,
+            RecoveryDisposition::ExactSourceRequired
+        );
         assert!(assessment.omitted_bytes > 0);
         assert!(!assessment.head.contains("MIDDLE-SENTINEL"));
         assert!(!assessment.tail.contains("MIDDLE-SENTINEL"));

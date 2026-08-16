@@ -90,7 +90,10 @@ pub(crate) fn codex_cli_check() -> DiagnosticCheck {
         }
         Ok(output) => DiagnosticCheck::warning(
             "codex-cli",
-            format!("Codex executable found but --version exited with {}", output.status),
+            format!(
+                "Codex executable found but --version exited with {}",
+                output.status
+            ),
         ),
         Err(error) => DiagnosticCheck::warning(
             "codex-cli",

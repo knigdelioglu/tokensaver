@@ -1,5 +1,5 @@
-use rand::rngs::OsRng;
 use rand::RngCore;
+use rand::rngs::OsRng;
 
 const CAPABILITY_BYTES: usize = 32;
 const CAPABILITY_HEX_LENGTH: usize = CAPABILITY_BYTES * 2;

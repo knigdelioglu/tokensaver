@@ -14,11 +14,11 @@ mod config;
 mod path;
 
 pub(crate) use config::{
+    CodexConfigError, CodexConfigSnapshot, CodexConnectionState, OriginalOpenAiBaseUrl,
     connect_with_snapshot, connection_state_with_snapshot, disconnect_with_snapshot,
-    load_config_snapshot, CodexConfigError, CodexConfigSnapshot, CodexConnectionState,
-    OriginalOpenAiBaseUrl,
+    load_config_snapshot,
 };
-pub(crate) use path::{codex_config_path, CodexPathError};
+pub(crate) use path::{CodexPathError, codex_config_path};
 
 #[cfg(test)]
 mod tests;

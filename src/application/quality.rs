@@ -1,6 +1,6 @@
 use crate::modules::aging::{
-    age_tool_results, parse_receipt, verify_exact_candidate, AgingPolicy, HistoryItem, ToolOutput,
-    ToolResultKind,
+    AgingPolicy, HistoryItem, ToolOutput, ToolResultKind, age_tool_results, parse_receipt,
+    verify_exact_candidate,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -210,7 +210,7 @@ fn mutate_same_length(source: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{run_quality_fixture, QualityFixtureKind};
+    use super::{QualityFixtureKind, run_quality_fixture};
 
     #[test]
     fn evidence_boundary_keeps_head_and_tail_but_not_middle() {

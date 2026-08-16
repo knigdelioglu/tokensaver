@@ -1,19 +1,19 @@
 use std::fmt;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
-use axum::body::{to_bytes, Body};
+use axum::Router;
+use axum::body::{Body, to_bytes};
 use axum::extract::State;
 use axum::http::header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, UPGRADE};
 use axum::http::{HeaderMap, Method, Request, Response, StatusCode};
-use axum::Router;
 use futures_util::{Stream, StreamExt};
 use reqwest::redirect::Policy;
 use tokio::net::TcpListener;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 
 use crate::modules::aging::AgingPolicy;
 
@@ -38,11 +38,7 @@ pub(crate) struct TransportSettings {
 
 impl TransportSettings {
     pub(crate) fn native_codex(bind_port: u16, aging_policy: AgingPolicy) -> Self {
-        Self::native_codex_with_capability(
-            bind_port,
-            CallerCapability::generate(),
-            aging_policy,
-        )
+        Self::native_codex_with_capability(bind_port, CallerCapability::generate(), aging_policy)
     }
 
     pub(crate) fn native_codex_with_capability(
@@ -58,10 +54,7 @@ impl TransportSettings {
         }
     }
 
-    pub(crate) fn with_observer(
-        mut self,
-        observer: mpsc::Sender<TransportObservation>,
-    ) -> Self {
+    pub(crate) fn with_observer(mut self, observer: mpsc::Sender<TransportObservation>) -> Self {
         self.observer = Some(observer);
         self
     }
@@ -234,7 +227,9 @@ impl fmt::Display for TransportError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(error) => write!(formatter, "transport I/O failed: {error}"),
-            Self::ClientBuild(error) => write!(formatter, "failed to build upstream client: {error}"),
+            Self::ClientBuild(error) => {
+                write!(formatter, "failed to build upstream client: {error}")
+            }
             Self::Serve(error) => write!(formatter, "loopback server failed: {error}"),
         }
     }
@@ -266,7 +261,8 @@ async fn handle_request(
     let Some(local_path) = state.capability.authenticate_path(request.uri().path()) else {
         return empty_response(StatusCode::NOT_FOUND);
     };
-    let Some(route) = native_route(local_path) else {
+    let local_path = local_path.to_owned();
+    let Some(route) = native_route(&local_path) else {
         return empty_response(StatusCode::NOT_FOUND);
     };
 
@@ -295,7 +291,7 @@ async fn handle_request(
         return empty_response(StatusCode::SERVICE_UNAVAILABLE);
     }
 
-    let Some(upstream_path) = upstream_path(local_path) else {
+    let Some(upstream_path) = upstream_path(&local_path) else {
         return empty_response(StatusCode::NOT_FOUND);
     };
     let query = request.uri().query().map(str::to_owned);
@@ -314,12 +310,7 @@ async fn handle_request(
     };
 
     let policy = *state.aging_policy.read().await;
-    let prepared = prepare_responses_body(
-        &body,
-        content_encoding.as_deref(),
-        local_path,
-        policy,
-    );
+    let prepared = prepare_responses_body(&body, content_encoding.as_deref(), &local_path, policy);
     let observation = TransportObservation {
         outcome: prepared.outcome,
         aging_stats: prepared.aging.stats.clone(),
@@ -415,7 +406,10 @@ fn native_route(path: &str) -> Option<NativeRoute> {
     Some(route)
 }
 
-fn relay_response(upstream: reqwest::Response, active_request: ActiveRequestGuard) -> Response<Body> {
+fn relay_response(
+    upstream: reqwest::Response,
+    active_request: ActiveRequestGuard,
+) -> Response<Body> {
     let status = upstream.status();
     let upstream_headers = upstream.headers().clone();
     let mut upstream_stream = Box::pin(
@@ -446,10 +440,9 @@ fn is_json_request(headers: &HeaderMap) -> bool {
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| {
-            value
-                .split(';')
-                .next()
-                .is_some_and(|media_type| media_type.trim().eq_ignore_ascii_case("application/json"))
+            value.split(';').next().is_some_and(|media_type| {
+                media_type.trim().eq_ignore_ascii_case("application/json")
+            })
         })
 }
 
@@ -476,13 +469,14 @@ fn empty_response(status: StatusCode) -> Response<Body> {
 
 #[cfg(test)]
 mod routing_tests {
-    use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
 
     use super::{
+        ActiveRequestGuard, CHATGPT_CODEX_BASE_URL, MAX_CONCURRENT_REQUESTS,
+        MAX_ENCODED_BODY_BYTES, NativeRouteKind, OPENAI_API_BASE_URL,
         encoded_content_length_exceeds_limit, native_route, native_upstream_base_url,
-        upstream_path, ActiveRequestGuard, NativeRouteKind, CHATGPT_CODEX_BASE_URL,
-        MAX_CONCURRENT_REQUESTS, MAX_ENCODED_BODY_BYTES, OPENAI_API_BASE_URL,
+        upstream_path,
     };
     use axum::http::{HeaderMap, HeaderValue, Method};
 

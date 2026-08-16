@@ -15,8 +15,9 @@ fn rust_sources(root: &Path) -> Vec<String> {
                 pending.push(path);
             } else if path.extension().and_then(|value| value.to_str()) == Some("rs") {
                 sources.push(
-                    fs::read_to_string(&path)
-                        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display())),
+                    fs::read_to_string(&path).unwrap_or_else(|error| {
+                        panic!("failed to read {}: {error}", path.display())
+                    }),
                 );
             }
         }
@@ -82,10 +83,7 @@ fn telemetry_does_not_reach_into_transport() {
 
 #[test]
 fn codex_integration_does_not_own_aging() {
-    assert_no_dependency(
-        "src/modules/codex_integration",
-        &["crate::modules::aging"],
-    );
+    assert_no_dependency("src/modules/codex_integration", &["crate::modules::aging"]);
 }
 
 #[test]

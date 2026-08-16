@@ -6,7 +6,7 @@ use crate::modules::aging::AgingPolicy;
 use super::capability::CallerCapability;
 use super::compression::EncodingChain;
 use super::headers::{has_browser_origin, native_upstream_headers};
-use super::request::{prepare_responses_body, PreparationOutcome};
+use super::request::{PreparationOutcome, prepare_responses_body};
 
 fn large_output() -> String {
     "0123456789abcdef".repeat(3_000)
@@ -53,8 +53,14 @@ fn capability_authenticates_only_exact_secret_and_v1_prefix() {
         Some("/v1/responses")
     );
     assert_eq!(capability.authenticate_path("/wrong/v1/responses"), None);
-    assert_eq!(capability.authenticate_path("/secret-value-extra/v1/responses"), None);
-    assert_eq!(capability.authenticate_path("/secret-value/responses"), None);
+    assert_eq!(
+        capability.authenticate_path("/secret-value-extra/v1/responses"),
+        None
+    );
+    assert_eq!(
+        capability.authenticate_path("/secret-value/responses"),
+        None
+    );
 }
 
 #[test]
@@ -145,7 +151,10 @@ fn mixed_output_is_preserved() {
     .expect("serialize mixed fixture");
 
     let prepared = prepare_responses_body(&source, None, "/v1/responses", aging_policy());
-    assert_eq!(prepared.outcome, PreparationOutcome::EvaluatedNoEligibleResult);
+    assert_eq!(
+        prepared.outcome,
+        PreparationOutcome::EvaluatedNoEligibleResult
+    );
     assert_eq!(prepared.bytes, source);
 }
 
@@ -160,9 +169,11 @@ fn supported_content_encodings_round_trip_when_aging_changes_body() {
         assert_eq!(prepared.outcome, PreparationOutcome::Aged, "{encoding}");
         let decoded = chain.decode(&prepared.bytes).expect("decode optimized");
         let optimized: Value = serde_json::from_slice(&decoded).expect("optimized JSON");
-        assert!(optimized["input"][1]["output"]
-            .as_str()
-            .is_some_and(|value| value.contains("compacted by TokenSaver")));
+        assert!(
+            optimized["input"][1]["output"]
+                .as_str()
+                .is_some_and(|value| value.contains("compacted by TokenSaver"))
+        );
     }
 }
 
@@ -183,7 +194,10 @@ fn browser_origin_is_rejected_and_auth_headers_are_allowlisted() {
     headers.insert("chatgpt-account-id", HeaderValue::from_static("account"));
     headers.insert("cookie", HeaderValue::from_static("private-cookie"));
     headers.insert("x-random-header", HeaderValue::from_static("nope"));
-    headers.insert("content-type", HeaderValue::from_static("application/json; charset=utf-8"));
+    headers.insert(
+        "content-type",
+        HeaderValue::from_static("application/json; charset=utf-8"),
+    );
 
     assert!(has_browser_origin(&headers));
     let forwarded = native_upstream_headers(&headers);

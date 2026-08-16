@@ -15,11 +15,9 @@ mod server;
 pub(crate) use capability::CallerCapability;
 pub(crate) use observation::TransportObservation;
 pub(crate) use request::{
-    is_compaction_path, is_responses_path, PreparationOutcome, PreparedRequestBody,
+    PreparationOutcome, PreparedRequestBody, is_compaction_path, is_responses_path,
 };
-pub(crate) use server::{
-    BoundTransport, TransportControl, TransportError, TransportSettings,
-};
+pub(crate) use server::{BoundTransport, TransportControl, TransportError, TransportSettings};
 
 #[cfg(test)]
 mod tests;

@@ -5,8 +5,8 @@ use tokio::sync::mpsc;
 
 use crate::modules::aging::AgingPolicy;
 use crate::modules::codex_integration::{
-    codex_config_path, connect_with_snapshot, disconnect_with_snapshot, load_config_snapshot,
-    CodexConfigError, CodexConfigSnapshot, CodexPathError,
+    CodexConfigError, CodexConfigSnapshot, CodexPathError, codex_config_path,
+    connect_with_snapshot, disconnect_with_snapshot, load_config_snapshot,
 };
 use crate::modules::transport::{
     BoundTransport, CallerCapability, TransportControl, TransportError, TransportObservation,
@@ -105,7 +105,8 @@ pub(super) async fn prepare_native_codex_connection_at(
     aging_policy: AgingPolicy,
 ) -> Result<PreparedCodexConnection, CodexConnectionError> {
     let settings = if snapshot_path.exists() {
-        let snapshot = load_config_snapshot(&snapshot_path).map_err(CodexConnectionError::Config)?;
+        let snapshot =
+            load_config_snapshot(&snapshot_path).map_err(CodexConnectionError::Config)?;
         let endpoint = snapshot.installed_openai_base_url.clone();
         let (port, capability) = CallerCapability::from_loopback_base_url(&endpoint)
             .ok_or_else(|| CodexConnectionError::InvalidPersistedEndpoint(endpoint.clone()))?;
@@ -119,12 +120,8 @@ pub(super) async fn prepare_native_codex_connection_at(
         .await
         .map_err(CodexConnectionError::Transport)?;
     let control = server.control();
-    let snapshot = connect_with_snapshot(
-        &config_path,
-        &snapshot_path,
-        &control.codex_base_url(),
-    )
-    .map_err(CodexConnectionError::Config)?;
+    let snapshot = connect_with_snapshot(&config_path, &snapshot_path, &control.codex_base_url())
+        .map_err(CodexConnectionError::Config)?;
 
     Ok(PreparedCodexConnection {
         server,
@@ -151,7 +148,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::{
-        disconnect_native_codex, prepare_native_codex_connection_at, CodexConnectionError,
+        CodexConnectionError, disconnect_native_codex, prepare_native_codex_connection_at,
     };
     use crate::modules::aging::AgingPolicy;
 

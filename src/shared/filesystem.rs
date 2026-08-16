@@ -10,11 +10,16 @@ static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 /// written Codex configuration.
 pub(crate) fn atomic_write_private(path: &Path, contents: &str) -> io::Result<()> {
     let parent = path.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "target path has no parent directory")
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "target path has no parent directory",
+        )
     })?;
     fs::create_dir_all(parent)?;
 
-    let permissions = fs::metadata(path).ok().map(|metadata| metadata.permissions());
+    let permissions = fs::metadata(path)
+        .ok()
+        .map(|metadata| metadata.permissions());
     let temporary = temporary_path(path);
 
     let write_result = (|| -> io::Result<()> {

@@ -4,13 +4,13 @@ use std::fmt;
 use crate::application::control::{
     ControlRequest, ControlResponse, ControlSavings, ControlSnapshot,
 };
-use crate::application::doctor::{run_doctor, DoctorSeverity};
+use crate::application::doctor::{DoctorSeverity, run_doctor};
 use crate::application::maintenance::purge_owned_state;
 use crate::application::runtime_client::send_runtime_request;
 use crate::application::settings::{
-    load_product_settings, set_product_numeric_setting, SettingsSnapshot,
+    SettingsSnapshot, load_product_settings, set_product_numeric_setting,
 };
-use crate::application::stats::{load_product_stats, StoredSavingsView};
+use crate::application::stats::{StoredSavingsView, load_product_stats};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -75,15 +75,23 @@ async fn status() -> Result<i32, Box<dyn Error>> {
         Ok(response) => {
             eprintln!(
                 "Runtime error: {}",
-                response.message.unwrap_or_else(|| "unknown error".to_owned())
+                response
+                    .message
+                    .unwrap_or_else(|| "unknown error".to_owned())
             );
             Ok(1)
         }
         Err(_) => {
             println!("Runtime: not running");
             if let Ok(settings) = load_product_settings() {
-                println!("Token saving preference: {}", on_off(settings.saving_enabled));
-                println!("Reconnect on launch: {}", yes_no(settings.connect_on_launch));
+                println!(
+                    "Token saving preference: {}",
+                    on_off(settings.saving_enabled)
+                );
+                println!(
+                    "Reconnect on launch: {}",
+                    yes_no(settings.connect_on_launch)
+                );
             }
             Ok(1)
         }
@@ -110,7 +118,7 @@ async fn saving(args: &[String]) -> Result<i32, Box<dyn Error>> {
         _ => {
             return Err(Box::new(CliError(
                 "usage: tokensaver saving <on|off>".to_owned(),
-            )))
+            )));
         }
     };
     runtime_mutation(ControlRequest::Saving { enabled }).await
@@ -165,7 +173,10 @@ async fn config_show() -> Result<i32, Box<dyn Error>> {
                 println!("connect_on_launch = {}", snapshot.connect_on_launch);
                 println!("min_bytes = {}", snapshot.policy.min_bytes);
                 println!("frontier = {}", snapshot.policy.frontier);
-                println!("preview_code_units = {}", snapshot.policy.preview_code_units);
+                println!(
+                    "preview_code_units = {}",
+                    snapshot.policy.preview_code_units
+                );
                 return Ok(0);
             }
         }
@@ -213,8 +224,12 @@ async fn uninstall(args: &[String]) -> Result<i32, Box<dyn Error>> {
         [] => {
             println!("Safe uninstall preparation is a two-step operation:");
             println!("  1. In the TokenSaver menu-bar menu choose ‘Prepare for Uninstall…’.");
-            println!("     This safely disconnects Codex, clears reconnect intent, disables Start at Login, and exits.");
-            println!("  2. Optionally run `tokensaver uninstall --purge-state` before removing TokenSaver.app to delete TokenSaver-owned preferences/statistics.");
+            println!(
+                "     This safely disconnects Codex, clears reconnect intent, disables Start at Login, and exits."
+            );
+            println!(
+                "  2. Optionally run `tokensaver uninstall --purge-state` before removing TokenSaver.app to delete TokenSaver-owned preferences/statistics."
+            );
             Ok(0)
         }
         [flag] if flag == "--purge-state" => purge_state_for_uninstall().await,
@@ -250,7 +265,9 @@ async fn purge_state_for_uninstall() -> Result<i32, Box<dyn Error>> {
             println!("  {entry}");
         }
     }
-    println!("You can now remove TokenSaver.app. Codex configuration was not modified by this purge command.");
+    println!(
+        "You can now remove TokenSaver.app. Codex configuration was not modified by this purge command."
+    );
     Ok(0)
 }
 
@@ -289,7 +306,10 @@ fn print_settings(settings: SettingsSnapshot) {
 }
 
 fn print_savings_control(savings: &ControlSavings) {
-    println!("  measured bytes saved: {}", format_bytes(savings.bytes_saved));
+    println!(
+        "  measured bytes saved: {}",
+        format_bytes(savings.bytes_saved)
+    );
     println!(
         "  estimated tokens saved: ~{}",
         format_count(savings.estimated_tokens_saved)
@@ -299,7 +319,10 @@ fn print_savings_control(savings: &ControlSavings) {
 }
 
 fn print_savings_stored(savings: StoredSavingsView) {
-    println!("  measured bytes saved: {}", format_bytes(savings.bytes_saved));
+    println!(
+        "  measured bytes saved: {}",
+        format_bytes(savings.bytes_saved)
+    );
     println!(
         "  estimated tokens saved: ~{}",
         format_count(savings.estimated_tokens_saved)

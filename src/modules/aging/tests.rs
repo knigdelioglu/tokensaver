@@ -1,6 +1,6 @@
 use super::{
-    age_tool_results, AgingPolicy, HistoryItem, ToolOutput, ToolResultKind,
-    DEFAULT_FRONTIER, DEFAULT_MIN_BYTES,
+    AgingPolicy, DEFAULT_FRONTIER, DEFAULT_MIN_BYTES, HistoryItem, ToolOutput, ToolResultKind,
+    age_tool_results,
 };
 
 fn large_text(seed: &str) -> String {
@@ -53,13 +53,29 @@ fn large_consumed_textual_output_is_aged() {
     assert_eq!(replacement.bytes_before, source.len());
     assert!(replacement.bytes_after < replacement.bytes_before);
     assert!(replacement.receipt.contains("the preceding shell call"));
-    assert!(replacement.receipt.contains("only when it is safe to repeat"));
+    assert!(
+        replacement
+            .receipt
+            .contains("only when it is safe to repeat")
+    );
     assert!(replacement.receipt.contains("must not be inferred"));
     assert!(replacement.receipt.contains("[tokensaver-receipt:v1 "));
     assert!(replacement.receipt.contains("sha256:"));
-    assert!(replacement.receipt.contains("--- beginning of original result ---"));
-    assert!(replacement.receipt.contains("--- omitted middle of original result ---"));
-    assert!(replacement.receipt.contains("--- end of original result ---"));
+    assert!(
+        replacement
+            .receipt
+            .contains("--- beginning of original result ---")
+    );
+    assert!(
+        replacement
+            .receipt
+            .contains("--- omitted middle of original result ---")
+    );
+    assert!(
+        replacement
+            .receipt
+            .contains("--- end of original result ---")
+    );
     assert_eq!(result.stats.tool_results_aged, 1);
     assert_eq!(
         result.stats.tool_result_bytes_saved,
@@ -263,6 +279,14 @@ fn missing_call_metadata_does_not_block_safe_aging() {
 
     assert_eq!(result.replacements.len(), 1);
     assert_eq!(result.replacements[0].source_call_id, None);
-    assert!(result.replacements[0].receipt.contains("the preceding tool call"));
-    assert!(result.replacements[0].receipt.contains("only when it is safe to repeat"));
+    assert!(
+        result.replacements[0]
+            .receipt
+            .contains("the preceding tool call")
+    );
+    assert!(
+        result.replacements[0]
+            .receipt
+            .contains("only when it is safe to repeat")
+    );
 }

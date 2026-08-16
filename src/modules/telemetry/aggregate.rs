@@ -48,9 +48,7 @@ impl SavingsSummary {
             OptimizationOutcome::EvaluatedNoSavings => {
                 self.no_savings_requests = self.no_savings_requests.saturating_add(1)
             }
-            OptimizationOutcome::Aged => {
-                self.aged_requests = self.aged_requests.saturating_add(1)
-            }
+            OptimizationOutcome::Aged => self.aged_requests = self.aged_requests.saturating_add(1),
         }
 
         let metrics = event.metrics;
@@ -88,11 +86,7 @@ impl SavingsSummary {
         if self.provider_input_tokens == 0 {
             return None;
         }
-        Some(
-            self.provider_cached_input_tokens
-                .saturating_mul(10_000)
-                / self.provider_input_tokens,
-        )
+        Some(self.provider_cached_input_tokens.saturating_mul(10_000) / self.provider_input_tokens)
     }
 }
 

@@ -59,9 +59,14 @@ impl fmt::Display for RuntimePreferencesError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(error) => write!(formatter, "runtime preferences I/O failed: {error}"),
-            Self::InvalidJson(error) => write!(formatter, "runtime preferences JSON is invalid: {error}"),
+            Self::InvalidJson(error) => {
+                write!(formatter, "runtime preferences JSON is invalid: {error}")
+            }
             Self::UnsupportedSchema(version) => {
-                write!(formatter, "unsupported runtime preferences schema version: {version}")
+                write!(
+                    formatter,
+                    "unsupported runtime preferences schema version: {version}"
+                )
             }
             Self::InvalidValue(name) => write!(formatter, "invalid runtime preference: {name}"),
         }
@@ -134,18 +139,19 @@ impl RuntimePreferencesStore {
         min_bytes: usize,
     ) -> Result<(), RuntimePreferencesError> {
         if min_bytes == 0 {
-            return Err(RuntimePreferencesError::InvalidValue("min_bytes must be greater than zero"));
+            return Err(RuntimePreferencesError::InvalidValue(
+                "min_bytes must be greater than zero",
+            ));
         }
         self.preferences.min_bytes = min_bytes;
         self.save()
     }
 
-    pub(crate) fn set_frontier(
-        &mut self,
-        frontier: usize,
-    ) -> Result<(), RuntimePreferencesError> {
+    pub(crate) fn set_frontier(&mut self, frontier: usize) -> Result<(), RuntimePreferencesError> {
         if frontier > 256 {
-            return Err(RuntimePreferencesError::InvalidValue("frontier must be <= 256"));
+            return Err(RuntimePreferencesError::InvalidValue(
+                "frontier must be <= 256",
+            ));
         }
         self.preferences.frontier = frontier;
         self.save()
@@ -175,10 +181,14 @@ impl RuntimePreferencesStore {
 
 fn validate(preferences: &RuntimePreferences) -> Result<(), RuntimePreferencesError> {
     if preferences.min_bytes == 0 {
-        return Err(RuntimePreferencesError::InvalidValue("min_bytes must be greater than zero"));
+        return Err(RuntimePreferencesError::InvalidValue(
+            "min_bytes must be greater than zero",
+        ));
     }
     if preferences.frontier > 256 {
-        return Err(RuntimePreferencesError::InvalidValue("frontier must be <= 256"));
+        return Err(RuntimePreferencesError::InvalidValue(
+            "frontier must be <= 256",
+        ));
     }
     if !(64..=16_384).contains(&preferences.preview_code_units) {
         return Err(RuntimePreferencesError::InvalidValue(
@@ -206,8 +216,8 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::{
-        RuntimePreferencesError, RuntimePreferencesStore, DEFAULT_FRONTIER, DEFAULT_MIN_BYTES,
-        DEFAULT_PREVIEW_CODE_UNITS,
+        DEFAULT_FRONTIER, DEFAULT_MIN_BYTES, DEFAULT_PREVIEW_CODE_UNITS, RuntimePreferencesError,
+        RuntimePreferencesStore,
     };
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);

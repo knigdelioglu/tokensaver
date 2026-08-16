@@ -55,7 +55,10 @@ impl fmt::Display for SavingsStoreError {
             Self::Io(error) => write!(formatter, "savings store I/O failed: {error}"),
             Self::InvalidJson(error) => write!(formatter, "savings store JSON is invalid: {error}"),
             Self::UnsupportedSchema(version) => {
-                write!(formatter, "unsupported savings store schema version: {version}")
+                write!(
+                    formatter,
+                    "unsupported savings store schema version: {version}"
+                )
             }
         }
     }

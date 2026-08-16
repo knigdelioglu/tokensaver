@@ -10,7 +10,5 @@ fn normal_cli_command_selects_cli_mode() {
 
 #[test]
 fn macos_process_serial_number_argument_does_not_select_cli_mode() {
-    assert!(!tokensaver::should_run_cli(&[
-        "-psn_0_12345".to_owned()
-    ]));
+    assert!(!tokensaver::should_run_cli(&["-psn_0_12345".to_owned()]));
 }
