@@ -49,8 +49,12 @@ Desktop.ini
 playwright-report/
 test-results/
 
-# Local release-validation evidence (template remains tracked)
+# Local release-validation evidence (templates remain tracked)
 validation/release-manifest.json
+validation/live-token-ab.json
+validation/live-aging-quality.json
+validation/cache-evidence.json
+validation/aging-release-gate.json
 
 # Package-manager debug logs
 npm-debug.log*
