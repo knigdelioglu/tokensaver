@@ -8,6 +8,7 @@ use crate::modules::diagnostics::{
     readable_file_check, DiagnosticCheck, DiagnosticSeverity,
 };
 use crate::shared::paths::{control_socket_path, product_data_dir};
+use crate::shared::security::redact_local_secrets;
 
 use super::control::{send_control_request, ControlRequest};
 
@@ -188,6 +189,6 @@ fn map_check(check: DiagnosticCheck) -> DoctorCheck {
             DiagnosticSeverity::Warning => DoctorSeverity::Warning,
             DiagnosticSeverity::Failure => DoctorSeverity::Failure,
         },
-        detail: check.detail,
+        detail: redact_local_secrets(&check.detail),
     }
 }
