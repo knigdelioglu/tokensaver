@@ -47,7 +47,10 @@ pub(crate) fn run_quality_fixture(fixture: QualityFixtureKind) -> QualityReport 
     let mut exact_sources_verify = true;
     let mut changed_sources_rejected = true;
     for replacement in &result.replacements {
-        let Some(source) = exact_sources.get(replacement.item_index).and_then(Option::as_deref) else {
+        let Some(source) = exact_sources
+            .get(replacement.item_index)
+            .and_then(|source| source.as_deref())
+        else {
             exact_sources_verify = false;
             changed_sources_rejected = false;
             continue;
@@ -68,7 +71,10 @@ pub(crate) fn run_quality_fixture(fixture: QualityFixtureKind) -> QualityReport 
 
     let (head_sentinel_visible, middle_sentinel_visible, tail_sentinel_visible) =
         if fixture == QualityFixtureKind::EvidenceBoundary {
-            let receipt = result.replacements.first().map(|replacement| replacement.receipt.as_str());
+            let receipt = result
+                .replacements
+                .first()
+                .map(|replacement| replacement.receipt.as_str());
             (
                 receipt.map(|value| value.contains("HEAD-SENTINEL")),
                 receipt.map(|value| value.contains("MIDDLE-SENTINEL")),
@@ -161,7 +167,10 @@ fn many_aged_results_history() -> (Vec<HistoryItem>, Vec<Option<String>>) {
 }
 
 fn long_distance_history() -> (Vec<HistoryItem>, Vec<Option<String>>) {
-    let source = format!("long-distance-head\n{}\nlong-distance-tail", "y".repeat(64 * 1024));
+    let source = format!(
+        "long-distance-head\n{}\nlong-distance-tail",
+        "y".repeat(64 * 1024)
+    );
     let mut history = vec![
         HistoryItem::FunctionCall {
             call_id: Some("old-call".to_owned()),
