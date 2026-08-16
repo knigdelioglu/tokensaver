@@ -2,15 +2,14 @@ use std::error::Error;
 use std::fmt;
 
 use crate::application::control::{
-    send_control_request, ControlRequest, ControlResponse, ControlSavings, ControlSnapshot,
+    ControlRequest, ControlResponse, ControlSavings, ControlSnapshot,
 };
-use crate::application::doctor::run_doctor;
+use crate::application::doctor::{run_doctor, DoctorSeverity};
+use crate::application::runtime_client::send_runtime_request;
 use crate::application::settings::{
-    load_settings, set_numeric_setting_offline, SettingsSnapshot,
+    load_product_settings, set_product_numeric_setting, SettingsSnapshot,
 };
-use crate::application::stats::{load_stored_stats, StoredSavingsView};
-use crate::modules::diagnostics::DiagnosticSeverity;
-use crate::shared::paths::{control_socket_path, product_data_dir};
+use crate::application::stats::{load_product_stats, StoredSavingsView};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -80,8 +79,7 @@ async fn status() -> Result<i32, Box<dyn Error>> {
         }
         Err(_) => {
             println!("Runtime: not running");
-            let data_dir = product_data_dir()?;
-            if let Ok(settings) = load_settings(&data_dir) {
+            if let Ok(settings) = load_product_settings() {
                 println!("Token saving preference: {}", on_off(settings.saving_enabled));
                 println!("Reconnect on launch: {}", yes_no(settings.connect_on_launch));
             }
@@ -131,8 +129,7 @@ async fn stats() -> Result<i32, Box<dyn Error>> {
         }
     }
 
-    let data_dir = product_data_dir()?;
-    let stored = load_stored_stats(&data_dir)?;
+    let stored = load_product_stats()?;
     println!("Runtime: not running; showing persisted counters");
     println!("Today");
     print_savings_stored(stored.today);
@@ -172,8 +169,7 @@ async fn config_show() -> Result<i32, Box<dyn Error>> {
         }
     }
 
-    let data_dir = product_data_dir()?;
-    print_settings(load_settings(&data_dir)?);
+    print_settings(load_product_settings()?);
     Ok(0)
 }
 
@@ -189,8 +185,7 @@ async fn config_set(key: &str, value: usize) -> Result<i32, Box<dyn Error>> {
             Ok(if response.ok { 0 } else { 1 })
         }
         Err(_) => {
-            let data_dir = product_data_dir()?;
-            let settings = set_numeric_setting_offline(&data_dir, key, value)?;
+            let settings = set_product_numeric_setting(key, value)?;
             println!("Runtime: not running; persisted setting for next connection");
             print_settings(settings);
             Ok(0)
@@ -202,9 +197,9 @@ async fn doctor() -> Result<i32, Box<dyn Error>> {
     let report = run_doctor().await;
     for check in &report.checks {
         let label = match check.severity {
-            DiagnosticSeverity::Pass => "PASS",
-            DiagnosticSeverity::Warning => "WARN",
-            DiagnosticSeverity::Failure => "FAIL",
+            DoctorSeverity::Pass => "PASS",
+            DoctorSeverity::Warning => "WARN",
+            DoctorSeverity::Failure => "FAIL",
         };
         println!("[{label}] {} — {}", check.name, check.detail);
     }
@@ -212,8 +207,7 @@ async fn doctor() -> Result<i32, Box<dyn Error>> {
 }
 
 async fn runtime_request(request: ControlRequest) -> Result<ControlResponse, Box<dyn Error>> {
-    let socket_path = control_socket_path()?;
-    Ok(send_control_request(&socket_path, &request).await?)
+    Ok(send_runtime_request(&request).await?)
 }
 
 fn print_status(snapshot: &ControlSnapshot) {
