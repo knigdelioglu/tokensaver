@@ -28,20 +28,24 @@ jobs:
 
           path = Path('src/modules/transport/server.rs')
           source = path.read_text()
-          old = '''    let Some(local_path) = state.capability.authenticate_path(request.uri().path()) else {
-              return empty_response(StatusCode::NOT_FOUND);
-          };
-          let Some(route) = native_route(local_path) else {'''
-          new = '''    let Some(local_path) = state.capability.authenticate_path(request.uri().path()) else {
-              return empty_response(StatusCode::NOT_FOUND);
-          };
-          let local_path = local_path.to_owned();
-          let Some(route) = native_route(&local_path) else {'''
-          if old not in source:
-              raise SystemExit('expected authenticate/native_route block not found')
-          source = source.replace(old, new, 1)
-          source = source.replace('let Some(upstream_path) = upstream_path(local_path) else {', 'let Some(upstream_path) = upstream_path(&local_path) else {', 1)
-          source = source.replace('        local_path,\n        policy,', '        &local_path,\n        policy,', 1)
+          replacements = [
+              (
+                  '    let Some(route) = native_route(local_path) else {',
+                  '    let local_path = local_path.to_owned();\n    let Some(route) = native_route(&local_path) else {',
+              ),
+              (
+                  '    let Some(upstream_path) = upstream_path(local_path) else {',
+                  '    let Some(upstream_path) = upstream_path(&local_path) else {',
+              ),
+              (
+                  '        local_path,\n        policy,',
+                  '        &local_path,\n        policy,',
+              ),
+          ]
+          for old, new in replacements:
+              if old not in source:
+                  raise SystemExit(f'expected source fragment not found: {old!r}')
+              source = source.replace(old, new, 1)
           path.write_text(source)
           PY
 
