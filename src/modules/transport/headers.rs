@@ -40,8 +40,8 @@ pub(crate) fn native_upstream_headers(headers: &HeaderMap) -> HeaderMap {
         let Ok(header_name) = HeaderName::from_bytes(name.as_bytes()) else {
             continue;
         };
-        for value in headers.get_all(&header_name) {
-            forwarded.append(header_name.clone(), value.clone());
+        for header_value in headers.get_all(&header_name).iter() {
+            forwarded.append(header_name.clone(), header_value.clone());
         }
     }
 
