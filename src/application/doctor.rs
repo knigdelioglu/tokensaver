@@ -1,0 +1,168 @@
+use std::path::PathBuf;
+
+use crate::modules::codex_integration::{
+    codex_config_path, connection_state_with_snapshot, load_config_snapshot, CodexConnectionState,
+};
+use crate::modules::diagnostics::{
+    codex_cli_check, first_party_reachability_check, owner_private_path_check,
+    readable_file_check, DiagnosticCheck, DiagnosticSeverity,
+};
+use crate::shared::paths::{control_socket_path, product_data_dir};
+
+use super::control::{send_control_request, ControlRequest};
+
+const SNAPSHOT_FILE: &str = "codex-config-snapshot.json";
+const SAVINGS_FILE: &str = "savings.json";
+const PREFERENCES_FILE: &str = "runtime-preferences.json";
+const CHATGPT_PROBE: &str = "https://chatgpt.com/backend-api/codex/models";
+const OPENAI_PROBE: &str = "https://api.openai.com/v1/models";
+
+#[derive(Clone, Debug)]
+pub(crate) struct DoctorReport {
+    pub(crate) checks: Vec<DiagnosticCheck>,
+}
+
+impl DoctorReport {
+    pub(crate) fn has_failures(&self) -> bool {
+        self.checks
+            .iter()
+            .any(|check| check.severity == DiagnosticSeverity::Failure)
+    }
+}
+
+pub(crate) async fn run_doctor() -> DoctorReport {
+    let mut checks = Vec::new();
+    checks.push(codex_cli_check());
+
+    let data_dir = match product_data_dir() {
+        Ok(path) => {
+            checks.push(owner_private_path_check("tokensaver-data-dir", &path));
+            Some(path)
+        }
+        Err(error) => {
+            checks.push(DiagnosticCheck::failure(
+                "tokensaver-data-dir",
+                format!("cannot resolve application data directory: {error}"),
+            ));
+            None
+        }
+    };
+
+    if let Some(data_dir) = &data_dir {
+        checks.push(owner_private_path_check(
+            "runtime-preferences",
+            &data_dir.join(PREFERENCES_FILE),
+        ));
+        checks.push(owner_private_path_check(
+            "savings-store",
+            &data_dir.join(SAVINGS_FILE),
+        ));
+        checks.push(snapshot_check(data_dir));
+    }
+
+    match codex_config_path() {
+        Ok(path) => checks.push(readable_file_check("codex-config", &path)),
+        Err(error) => checks.push(DiagnosticCheck::failure(
+            "codex-config",
+            format!("cannot resolve Codex configuration: {error}"),
+        )),
+    }
+
+    checks.push(runtime_control_check().await);
+    checks.push(
+        first_party_reachability_check("chatgpt-upstream", CHATGPT_PROBE).await,
+    );
+    checks.push(first_party_reachability_check("openai-upstream", OPENAI_PROBE).await);
+
+    DoctorReport { checks }
+}
+
+fn snapshot_check(data_dir: &PathBuf) -> DiagnosticCheck {
+    let snapshot_path = data_dir.join(SNAPSHOT_FILE);
+    if !snapshot_path.exists() {
+        return DiagnosticCheck::pass(
+            "codex-restoration-snapshot",
+            "no active restoration snapshot",
+        );
+    }
+
+    let private = owner_private_path_check("codex-restoration-snapshot", &snapshot_path);
+    if private.severity == DiagnosticSeverity::Failure {
+        return private;
+    }
+
+    let snapshot = match load_config_snapshot(&snapshot_path) {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            return DiagnosticCheck::failure(
+                "codex-restoration-snapshot",
+                format!("snapshot cannot be validated: {error}"),
+            );
+        }
+    };
+    let config_path = match codex_config_path() {
+        Ok(path) => path,
+        Err(error) => {
+            return DiagnosticCheck::failure(
+                "codex-restoration-snapshot",
+                format!("snapshot exists but Codex config cannot be resolved: {error}"),
+            );
+        }
+    };
+
+    match connection_state_with_snapshot(&config_path, &snapshot_path) {
+        Ok(CodexConnectionState::Connected) => DiagnosticCheck::pass(
+            "codex-restoration-snapshot",
+            "snapshot is valid and matches the TokenSaver-owned Codex configuration",
+        ),
+        Ok(CodexConnectionState::NotConnected) => DiagnosticCheck::warning(
+            "codex-restoration-snapshot",
+            "snapshot exists but Codex currently appears restored/disconnected",
+        ),
+        Ok(CodexConnectionState::Drifted) => DiagnosticCheck::failure(
+            "codex-restoration-snapshot",
+            "snapshot exists and TokenSaver-owned Codex configuration has drifted",
+        ),
+        Err(error) => DiagnosticCheck::failure(
+            "codex-restoration-snapshot",
+            format!("snapshot/config coherence check failed: {error}"),
+        ),
+    }
+}
+
+async fn runtime_control_check() -> DiagnosticCheck {
+    let socket_path = match control_socket_path() {
+        Ok(path) => path,
+        Err(error) => {
+            return DiagnosticCheck::failure(
+                "runtime-control",
+                format!("cannot resolve control socket path: {error}"),
+            );
+        }
+    };
+
+    match send_control_request(&socket_path, &ControlRequest::Status).await {
+        Ok(response) if response.ok => {
+            let detail = response
+                .snapshot
+                .map(|snapshot| {
+                    format!(
+                        "runtime reachable; service={}, codex={}, active_requests={}",
+                        snapshot.service, snapshot.codex, snapshot.active_requests
+                    )
+                })
+                .unwrap_or_else(|| "runtime reachable".to_owned());
+            DiagnosticCheck::pass("runtime-control", detail)
+        }
+        Ok(response) => DiagnosticCheck::warning(
+            "runtime-control",
+            response
+                .message
+                .unwrap_or_else(|| "runtime returned an unsuccessful status".to_owned()),
+        ),
+        Err(_) => DiagnosticCheck::warning(
+            "runtime-control",
+            "menu-bar runtime is not reachable; start TokenSaver for connect/saving commands",
+        ),
+    }
+}
