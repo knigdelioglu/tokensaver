@@ -5,6 +5,7 @@ use crate::application::control::{
     ControlRequest, ControlResponse, ControlSavings, ControlSnapshot,
 };
 use crate::application::doctor::{run_doctor, DoctorSeverity};
+use crate::application::maintenance::purge_owned_state;
 use crate::application::runtime_client::send_runtime_request;
 use crate::application::settings::{
     load_product_settings, set_product_numeric_setting, SettingsSnapshot,
@@ -54,6 +55,7 @@ async fn run_async(args: Vec<String>) -> Result<i32, Box<dyn Error>> {
         "stats" => stats().await,
         "config" => config(&args[1..]).await,
         "doctor" => doctor().await,
+        "uninstall" => uninstall(&args[1..]).await,
         other => Err(Box::new(CliError(format!(
             "unknown command {other:?}; run `tokensaver help`"
         )))),
@@ -206,6 +208,52 @@ async fn doctor() -> Result<i32, Box<dyn Error>> {
     Ok(if report.has_failures() { 1 } else { 0 })
 }
 
+async fn uninstall(args: &[String]) -> Result<i32, Box<dyn Error>> {
+    match args {
+        [] => {
+            println!("Safe uninstall preparation is a two-step operation:");
+            println!("  1. In the TokenSaver menu-bar menu choose ‘Prepare for Uninstall…’.");
+            println!("     This safely disconnects Codex, clears reconnect intent, disables Start at Login, and exits.");
+            println!("  2. Optionally run `tokensaver uninstall --purge-state` before removing TokenSaver.app to delete TokenSaver-owned preferences/statistics.");
+            Ok(0)
+        }
+        [flag] if flag == "--purge-state" => purge_state_for_uninstall().await,
+        _ => Err(Box::new(CliError(
+            "usage: tokensaver uninstall [--purge-state]".to_owned(),
+        ))),
+    }
+}
+
+async fn purge_state_for_uninstall() -> Result<i32, Box<dyn Error>> {
+    if runtime_request(ControlRequest::Status).await.is_ok() {
+        return Err(Box::new(CliError(
+            "TokenSaver runtime is still running; choose ‘Prepare for Uninstall…’ from the menu-bar app first"
+                .to_owned(),
+        )));
+    }
+
+    let report = purge_owned_state()?;
+    if report.removed_files.is_empty() {
+        println!("No TokenSaver-owned state files needed removal.");
+    } else {
+        println!("Removed TokenSaver-owned state:");
+        for file in &report.removed_files {
+            println!("  {file}");
+        }
+    }
+
+    if report.removed_data_directory {
+        println!("TokenSaver state directory is removed/absent.");
+    } else if !report.preserved_entries.is_empty() {
+        println!("Preserved unknown entries (not owned by the uninstaller):");
+        for entry in &report.preserved_entries {
+            println!("  {entry}");
+        }
+    }
+    println!("You can now remove TokenSaver.app. Codex configuration was not modified by this purge command.");
+    Ok(0)
+}
+
 async fn runtime_request(request: ControlRequest) -> Result<ControlResponse, Box<dyn Error>> {
     Ok(send_runtime_request(&request).await?)
 }
@@ -263,9 +311,10 @@ fn print_savings_stored(savings: StoredSavingsView) {
 fn print_help() {
     println!(
         "TokenSaver {VERSION}\n\n\
-Usage:\n  tokensaver status\n  tokensaver connect\n  tokensaver disconnect\n  tokensaver saving <on|off>\n  tokensaver stats\n  tokensaver config show\n  tokensaver config set min-bytes <bytes>\n  tokensaver config set frontier <count>\n  tokensaver config set preview-code-units <count>\n  tokensaver doctor\n  tokensaver version\n\n\
+Usage:\n  tokensaver status\n  tokensaver connect\n  tokensaver disconnect\n  tokensaver saving <on|off>\n  tokensaver stats\n  tokensaver config show\n  tokensaver config set min-bytes <bytes>\n  tokensaver config set frontier <count>\n  tokensaver config set preview-code-units <count>\n  tokensaver doctor\n  tokensaver uninstall [--purge-state]\n  tokensaver version\n\n\
 `connect`, `disconnect`, and `saving` control the running menu-bar runtime.\n\
-`stats` and `config` can also read persisted owner-local state while the runtime is closed."
+`stats` and `config` can also read persisted owner-local state while the runtime is closed.\n\
+`uninstall` explains the safe detach flow; `--purge-state` is destructive and only works after the menu-bar runtime has exited."
     );
 }
 
