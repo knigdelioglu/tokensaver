@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::shared::security::redact_local_secrets;
+
 use super::desktop_runtime::{
     AgingPolicyView, DesktopCodexState, DesktopRuntimeController, DesktopRuntimeSnapshot,
     DesktopServiceState, SavingsView,
@@ -69,9 +71,10 @@ impl ControlResponse {
     }
 
     fn failure(message: impl Into<String>, snapshot: Option<ControlSnapshot>) -> Self {
+        let message = redact_local_secrets(&message.into());
         Self {
             ok: false,
-            message: Some(message.into()),
+            message: Some(message),
             snapshot,
         }
     }
@@ -287,7 +290,9 @@ fn snapshot_to_control(snapshot: DesktopRuntimeSnapshot) -> ControlSnapshot {
         session: savings_to_control(snapshot.session),
         today: savings_to_control(snapshot.today),
         all_time: savings_to_control(snapshot.all_time),
-        last_error: snapshot.last_error,
+        last_error: snapshot
+            .last_error
+            .map(|message| redact_local_secrets(&message)),
     }
 }
 
