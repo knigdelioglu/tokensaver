@@ -146,7 +146,10 @@ fn previous_response_id_is_detected_and_preserved_during_aging() {
     let prepared = prepare_responses_body(&source, None, "/v1/responses", aging_policy());
     assert_eq!(prepared.outcome, PreparationOutcome::Aged);
     let optimized: Value = serde_json::from_slice(&prepared.bytes).expect("optimized");
-    assert_eq!(optimized["previous_response_id"], value["previous_response_id"]);
+    assert_eq!(
+        optimized["previous_response_id"],
+        value["previous_response_id"]
+    );
 
     let diagnostics = prepared.diagnostics.expect("diagnostics");
     assert!(diagnostics.has_previous_response_id);
@@ -178,7 +181,10 @@ fn mixed_output_is_preserved_and_skip_reason_is_visible() {
     );
     assert_eq!(prepared.bytes, source);
     assert_eq!(
-        prepared.diagnostics.expect("diagnostics").unsupported_output,
+        prepared
+            .diagnostics
+            .expect("diagnostics")
+            .unsupported_output,
         1
     );
 }
