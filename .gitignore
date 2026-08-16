@@ -1,7 +1,10 @@
 # Dependencies
 node_modules/
 
-# Build output
+# Rust / Tauri build output
+target/
+
+# Other build output
 dist/
 build/
 out/
