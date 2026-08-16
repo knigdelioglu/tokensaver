@@ -68,37 +68,34 @@ pub(crate) enum CodexConfigError {
 impl fmt::Display for CodexConfigError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidToml(error) => write!(formatter, "invalid Codex config TOML: {error}"),
+            Self::InvalidToml(_) => write!(formatter, "Codex config TOML is invalid"),
             Self::UnsupportedOpenAiBaseUrlType => {
                 write!(formatter, "Codex openai_base_url must be a string when present")
             }
             Self::UnsupportedChatGptBaseUrlType => {
                 write!(formatter, "Codex chatgpt_base_url must be a string when present")
             }
-            Self::UnsafeLoopbackUrl(url) => {
-                write!(formatter, "TokenSaver base URL is not a managed loopback /v1 URL: {url}")
-            }
-            Self::SnapshotFormat(error) => {
-                write!(formatter, "invalid TokenSaver config snapshot: {error}")
+            Self::UnsafeLoopbackUrl(_) => write!(
+                formatter,
+                "TokenSaver base URL is not a valid managed loopback /v1 URL"
+            ),
+            Self::SnapshotFormat(_) => {
+                write!(formatter, "TokenSaver config snapshot is invalid")
             }
             Self::UnsupportedSnapshotVersion(version) => {
                 write!(formatter, "unsupported TokenSaver config snapshot version: {version}")
             }
-            Self::ActiveSnapshotDifferentEndpoint { installed, requested } => write!(
+            Self::ActiveSnapshotDifferentEndpoint { .. } => write!(
                 formatter,
-                "TokenSaver is already connected at {installed:?}; refusing to replace it with {requested:?} without a clean disconnect"
+                "TokenSaver already has an active managed endpoint; cleanly disconnect before replacing it"
             ),
             Self::SnapshotDrift => write!(
                 formatter,
                 "TokenSaver snapshot exists but Codex configuration has drifted; refusing automatic overwrite"
             ),
-            Self::Drift {
-                key,
-                expected,
-                actual,
-            } => write!(
+            Self::Drift { key, .. } => write!(
                 formatter,
-                "Codex {key} changed after TokenSaver connected; expected {expected:?}, found {actual:?}"
+                "Codex {key} changed after TokenSaver connected; refusing to overwrite the changed value"
             ),
             Self::Io(error) => write!(formatter, "Codex config I/O failed: {error}"),
         }
