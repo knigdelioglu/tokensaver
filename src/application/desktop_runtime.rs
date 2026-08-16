@@ -188,6 +188,11 @@ impl DesktopRuntimeController {
     pub(crate) fn open(data_dir: impl Into<PathBuf>) -> Result<Self, DesktopRuntimeError> {
         let data_dir = data_dir.into();
         fs::create_dir_all(&data_dir)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&data_dir, fs::Permissions::from_mode(0o700))?;
+        }
 
         let preferences = RuntimePreferencesStore::open(data_dir.join(PREFERENCES_FILE))?;
         let saving_enabled = preferences.preferences().saving_enabled;
