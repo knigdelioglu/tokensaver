@@ -7,7 +7,6 @@ use axum::body::{to_bytes, Body};
 use axum::extract::State;
 use axum::http::header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, UPGRADE};
 use axum::http::{HeaderMap, Method, Request, Response, StatusCode};
-use axum::routing::any;
 use axum::Router;
 use futures_util::StreamExt;
 use reqwest::redirect::Policy;
@@ -146,7 +145,7 @@ impl BoundTransport {
 
     pub(crate) async fn serve(self) -> Result<(), TransportError> {
         let app = Router::new()
-            .fallback(any(handle_request))
+            .fallback(handle_request)
             .with_state(self.state);
         axum::serve(self.listener, app)
             .await
