@@ -10,6 +10,7 @@ use super::compression::EncodingChain;
 pub(crate) enum PreparationOutcome {
     Disabled,
     CompactionBypass,
+    NativePassthrough,
     EvaluatedNoEligibleResult,
     EvaluatedNoSavings,
     Aged,
@@ -25,7 +26,7 @@ pub(crate) struct PreparedRequestBody {
 }
 
 impl PreparedRequestBody {
-    fn original(bytes: &[u8], outcome: PreparationOutcome) -> Self {
+    pub(crate) fn original(bytes: &[u8], outcome: PreparationOutcome) -> Self {
         Self {
             bytes: bytes.to_vec(),
             outcome,
@@ -48,7 +49,7 @@ pub(crate) fn prepare_responses_body(
         return PreparedRequestBody::original(encoded_body, PreparationOutcome::CompactionBypass);
     }
     if !is_responses_path(upstream_path) {
-        return PreparedRequestBody::original(encoded_body, PreparationOutcome::CompactionBypass);
+        return PreparedRequestBody::original(encoded_body, PreparationOutcome::NativePassthrough);
     }
 
     match try_prepare(encoded_body, content_encoding, policy) {
