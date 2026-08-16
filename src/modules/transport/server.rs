@@ -1,7 +1,7 @@
 use std::fmt;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -73,6 +73,7 @@ pub(crate) struct TransportControl {
     capability: CallerCapability,
     aging_policy: Arc<RwLock<AgingPolicy>>,
     active_requests: Arc<AtomicUsize>,
+    dropped_observations: Arc<AtomicU64>,
     draining: Arc<AtomicBool>,
 }
 
@@ -95,6 +96,10 @@ impl TransportControl {
 
     pub(crate) fn active_requests(&self) -> usize {
         self.active_requests.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn dropped_observations(&self) -> u64 {
+        self.dropped_observations.load(Ordering::Acquire)
     }
 
     /// Stop admitting new native requests and return the number of requests
@@ -126,6 +131,7 @@ impl BoundTransport {
         let local_addr = listener.local_addr()?;
         let aging_policy = Arc::new(RwLock::new(settings.aging_policy));
         let active_requests = Arc::new(AtomicUsize::new(0));
+        let dropped_observations = Arc::new(AtomicU64::new(0));
         let draining = Arc::new(AtomicBool::new(false));
         let client = reqwest::Client::builder()
             .redirect(Policy::none())
@@ -137,6 +143,7 @@ impl BoundTransport {
             capability: settings.capability.clone(),
             aging_policy: aging_policy.clone(),
             active_requests: active_requests.clone(),
+            dropped_observations: dropped_observations.clone(),
             draining: draining.clone(),
             observer: settings.observer,
             client,
@@ -146,6 +153,7 @@ impl BoundTransport {
             capability: settings.capability,
             aging_policy,
             active_requests,
+            dropped_observations,
             draining,
         };
 
@@ -175,6 +183,7 @@ struct ServerState {
     capability: CallerCapability,
     aging_policy: Arc<RwLock<AgingPolicy>>,
     active_requests: Arc<AtomicUsize>,
+    dropped_observations: Arc<AtomicU64>,
     draining: Arc<AtomicBool>,
     observer: Option<mpsc::Sender<TransportObservation>>,
     client: reqwest::Client,
@@ -315,10 +324,15 @@ async fn handle_request(
     if let Some(observer) = &state.observer {
         // Telemetry is best-effort and content-free. A stuck consumer must not
         // create an unbounded memory queue or delay native Codex traffic.
-        let _ = observer.try_send(TransportObservation {
-            outcome: prepared.outcome,
-            aging_stats: prepared.aging.stats.clone(),
-        });
+        if observer
+            .try_send(TransportObservation {
+                outcome: prepared.outcome,
+                aging_stats: prepared.aging.stats.clone(),
+            })
+            .is_err()
+        {
+            state.dropped_observations.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     let mut headers = native_upstream_headers(&inbound_headers);
