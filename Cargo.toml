@@ -10,6 +10,7 @@ path = "src/lib.rs"
 [dependencies]
 axum = { version = "0.8", features = ["http1", "tokio"] }
 brotli = "6"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 dirs = "5"
 flate2 = "1"
 futures-util = "0.3"
@@ -18,9 +19,14 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
-tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "signal", "sync"] }
+tauri = { version = "2.11.5", features = ["tray-icon"] }
+tauri-plugin-autostart = "2.5.1"
+tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 toml_edit = "0.22"
 zstd = "0.13"
+
+[build-dependencies]
+tauri-build = "2.6.3"
 
 [lints.rust]
 unsafe_code = "forbid"
