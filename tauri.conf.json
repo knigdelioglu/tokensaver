@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "TokenSaver",
+  "version": "0.1.0",
+  "identifier": "com.knigdelioglu.tokensaver",
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    }
+  }
+}
