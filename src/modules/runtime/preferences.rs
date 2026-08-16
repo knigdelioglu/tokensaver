@@ -5,13 +5,17 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::modules::aging::{
-    DEFAULT_FRONTIER, DEFAULT_MIN_BYTES, DEFAULT_PREVIEW_CODE_UNITS,
-};
 use crate::shared::filesystem::atomic_write_private;
 
 const PREFERENCES_SCHEMA_VERSION: u32 = 2;
 const LEGACY_SCHEMA_VERSION: u32 = 1;
+
+// Persistence defaults are intentionally duplicated at this boundary rather
+// than importing the aging domain. `application::settings` owns the authored
+// contract test that keeps these persisted defaults aligned with AgingPolicy.
+const DEFAULT_MIN_BYTES: usize = 32 * 1024;
+const DEFAULT_FRONTIER: usize = 4;
+const DEFAULT_PREVIEW_CODE_UNITS: usize = 1_024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct RuntimePreferences {
@@ -40,12 +44,6 @@ impl Default for RuntimePreferences {
             frontier: DEFAULT_FRONTIER,
             preview_code_units: DEFAULT_PREVIEW_CODE_UNITS,
         }
-    }
-}
-
-impl RuntimePreferences {
-    pub(crate) fn policy_values(self) -> (usize, usize, usize) {
-        (self.min_bytes, self.frontier, self.preview_code_units)
     }
 }
 
