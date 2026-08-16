@@ -2,7 +2,7 @@
 
 TokenSaver has one product goal: **reduce repeated input-token usage in Codex by compacting old, already-consumed tool results while leaving the rest of Codex behavior unchanged.**
 
-TokenSaver is a modular monolith, not a model router. The user continues using normal Codex; TokenSaver sits transparently on the native request path and exposes operation/savings through a small macOS tray application.
+TokenSaver is a modular monolith, not a model router. The user continues using normal Codex; TokenSaver sits transparently on the native request path and exposes operation/savings through a small macOS menu-bar application.
 
 ```text
 Codex
@@ -203,71 +203,41 @@ Still deferred for the final executed pass:
 
 Authoritative document: `docs/RECOVERY.md`.
 
-Goal: make information loss explicit and make exact recovery verifiable without creating a broad private store of original tool outputs.
+Goal: make information loss explicit and exact recovery verifiable without creating a broad private store of original tool outputs.
 
 ## Verifiable receipt v1
 
-New receipts contain machine-readable identity:
+Receipts contain machine-readable identity:
 
 ```text
 [tokensaver-receipt:v1 original_bytes=<n> sha256=<hex> head_bytes=<n> tail_bytes=<n>]
 ```
 
-Receipt rules:
+Implemented rules:
 
-- head and tail are explicitly verbatim evidence
-- omitted middle is explicitly marked unavailable
-- the model is told **not to infer** omitted bytes
-- replay of the previous tool is suggested only when that operation is safe to repeat
-- exact recovery is accepted only when UTF-8 byte length and SHA-256 both match
+- head/tail are explicitly verbatim evidence
+- omitted middle is explicitly unavailable and must not be inferred
+- exact candidates require matching UTF-8 byte length + SHA-256
+- unsupported receipt versions/layouts are rejected
+- no persistent exact-result vault exists in MVP
 
-Implemented aging-domain APIs:
-
-- parse/validate TokenSaver receipt evidence
-- expose original byte count, digest, head, tail, and omitted byte count
-- verify an externally recovered exact candidate
-- reject unsupported receipt versions and malformed layouts
-
-## Application recovery contract
-
-`src/application/recovery.rs` implements explicit recovery intent rather than inferring intent from arbitrary model text.
-
-Outcomes distinguish:
+Application recovery outcomes distinguish:
 
 - `ReceiptEvidenceAvailable`
 - `ExactSourceRequired`
 - `VerifiedExact`
 - `Rejected`
 
-If exact omitted content is required, TokenSaver never reconstructs it. The normal Codex workflow must obtain the source again; a returned candidate becomes exact only after identity verification.
+Deterministic quality fixtures cover evidence boundaries, many aged results, long history distance, exact identity verification, and modified-source rejection.
 
-## Privacy boundary
+Still deferred for final A/B validation:
 
-MVP deliberately has **no persistent exact-result vault**.
-
-TokenSaver therefore does not create a second store containing complete shell output, file reads, diffs, or search results merely for recovery. A future bounded owner-local cache would require a separate architecture/privacy decision.
-
-## Deterministic quality harness
-
-`src/application/quality.rs` provides authored fixtures for:
-
-- head/middle/tail evidence boundary
-- many aged results in one history
-- old consumed result after a long history distance
-- receipt parsing for every aged fixture result
-- exact-source digest verification
-- same-length modified-source rejection
-
-Existing Phase 3 coverage supplies the explicit conversation-compaction bypass side of the combined behavior.
-
-Still deferred for the final executed/live A/B pass:
-
-- real task success ON vs OFF
-- real tool-call correctness ON vs OFF
-- model behavior when a needed fact exists only in omitted middle
-- safety of actual tool replay/recovery
+- task success ON vs OFF
+- tool-call correctness ON vs OFF
+- omitted-middle behavior in real tasks
+- actual tool replay/recovery safety
 - aging + native conversation compaction in live sessions
-- authoritative input/cache token comparison
+- authoritative token/cache comparison
 - latency overhead
 
 **No tests/build/lint/formatter/CI or live A/B validation have been executed.**
@@ -276,50 +246,155 @@ Still deferred for the final executed/live A/B pass:
 
 # Phase 5 — macOS runtime and tray/menu-bar application
 
-**Status: NOT STARTED**
+**Status: IMPLEMENTED — VALIDATION DEFERRED**
 
-Goal: let the user see and control TokenSaver without a terminal.
+Authoritative document: `docs/DESKTOP_RUNTIME.md`.
 
-Required real states:
+Goal: let the user see, control, and safely operate TokenSaver without a terminal while keeping all truth in backend/application state.
 
-- TokenSaver running/stopped
-- Codex connected/waiting/configuration problem
-- token saving enabled/disabled
-- request active/idle
-- config drift/error
+## 5.1 Windowless Tauri shell — implemented
 
-Required tray information/actions:
+Implemented:
+
+- Tauri 2 desktop entry point
+- no webview/application window
+- macOS accessory activation policy
+- menu-bar tray title + tooltip
+- single-instance protection
+- tray menu built entirely from native Tauri menu items
+
+The shell reaches core behavior only through `application::desktop_runtime`; it does not access aging/transport/config persistence directly.
+
+## 5.2 Real runtime states — implemented
+
+Tray state is refreshed from backend evidence and distinguishes:
+
+- service Starting / Active / Error
+- Codex Disconnected / Connecting / Connected / Configuration Drift / Error
+- Token Saving enabled/disabled
+- request Idle / Active with concurrent request count
+- health/error state
+
+Connection health is periodically re-proven against the Phase 3 config snapshot rather than inferred from a UI toggle.
+
+## 5.3 Savings visibility — implemented
+
+Tray shows:
+
+- this session
+- current local day
+- all time
+- last successful optimization
+
+Each scope displays separately:
+
+- **measured serialized bytes saved**
+- **estimated tokens saved** (`~` / `est.` labeled)
+- compacted tool-result count
+- aging-request count
+
+The menu-bar title may show the current-day estimated saving, always prefixed with `~`.
+
+## 5.4 Durable content-free telemetry — implemented
+
+`src/modules/telemetry/store.rs` persists only numeric aggregates:
+
+- all-time summary
+- bounded daily summaries (maximum 120 local-day buckets)
+- last optimization numeric metadata
+
+It persists no prompt, result body, receipt body, credential, account ID, or capability secret.
+
+Writes use the existing atomic private-file primitive and are periodically flushed rather than synchronously blocking every Codex request.
+
+## 5.5 Runtime preferences — implemented
+
+`runtime-preferences.json` persists:
+
+- `saving_enabled`
+- `connect_on_launch`
+
+Behavior:
+
+- first launch defaults to Codex disconnected, saving enabled
+- explicit **Connect to Codex** sets `connect_on_launch = true`
+- explicit **Disconnect from Codex** safely restores config and sets it false
+- normal safe Quit restores config but preserves connection intent
+- later app launch / Start at Login reconnects when that intent is true
+- crash snapshot recovery remains authoritative when a Phase 3 snapshot survived
+
+Saving toggle changes are persisted and also update the live transport policy when connected.
+
+## 5.6 Start at Login — implemented
+
+Tray exposes **Start at Login** through the Tauri autostart plugin using macOS LaunchAgent mode.
+
+The checked state is read from the real operating-system/plugin state. Start-at-login and desired Codex connection are separate controls.
+
+## 5.7 Request-aware safe disconnect and quit — implemented
+
+Transport now tracks real request lifetime through the entire relayed response stream, not merely until upstream headers arrive.
+
+A drain gate protects disconnect:
 
 ```text
-TokenSaver
-──────────────
-Status            Active
-Codex             Connected
-Token Saving      On
-
-This session
-Saved             ~184K tokens
-Compacted         12 results
-
-Today
-Saved             ~742K tokens
-
-All time
-Saved             ~2.6M tokens
-
-Last optimization
-84 KB → 3 KB
+stop new request admission
+        ↓
+check in-flight responses
+        ↓
+0 ──► restore Codex config ──► stop transport
+│
+└─ >0 ──► resume admission + refuse disconnect
 ```
 
-Also:
+The request handler performs a second drain check after incrementing the active counter, closing the shutdown/admission race before upstream forwarding.
 
-- enable/disable saving
-- Connect to Codex / Disconnect
-- Start at Login
-- diagnostics/status
-- safe quit
+Tray disables Disconnect and Quit while requests are active, and the backend independently enforces the same condition in case UI state is stale.
 
-Tray truth must come from backend/runtime state rather than UI toggle state.
+Every normal app exit request is intercepted. The process is allowed to exit only after safe restore + transport shutdown + telemetry flush succeeds. Drift/restoration errors leave TokenSaver running instead of knowingly stranding Codex on a dead loopback URL.
+
+## 5.8 Shutdown/relaunch behavior — implemented
+
+Normal safe shutdown:
+
+1. refuse if a Codex request is active
+2. begin transport drain
+3. restore TokenSaver-owned Codex config
+4. stop the loopback server
+5. allow the content-free observation receiver a bounded drain period
+6. flush numeric telemetry
+7. exit while preserving `connect_on_launch`
+
+Relaunch reconnects automatically when the user previously chose to stay connected.
+
+## 5.9 Privacy and outward error handling — implemented
+
+- app data files are owner-private through atomic private writes
+- routine telemetry is content-free
+- tray errors never intentionally expose request/result bodies
+- conservative local-loopback redaction helper is present for capability-bearing diagnostics
+- capability values remain limited to the active Codex config and owner-only restoration snapshot required for routing/recovery
+
+## Phase 5 deferred validation
+
+Still requiring the user's final validation pass:
+
+- Rust compile/test/lint/format
+- actual macOS tray visibility/layout
+- native menu action behavior
+- single-instance behavior
+- first Connect / explicit Disconnect round trip
+- normal Quit / relaunch preserving `connect_on_launch`
+- Start at Login LaunchAgent behavior
+- crash/restart snapshot recovery
+- live saving-toggle behavior
+- streamed Active → Idle request lifecycle
+- Disconnect/Quit refusal during a real active request
+- telemetry persistence + local-day rollover
+- tray/backend state consistency
+- surfaced error/capability redaction
+
+**No test/build/lint/formatter/CI or live desktop validation command has been executed.**
 
 ---
 
@@ -342,7 +417,7 @@ tokensaver config set frontier ...
 tokensaver doctor
 ```
 
-`doctor` should verify Codex compatibility, loopback state, config ownership/drift, upstream reachability, saving state, last optimizer activity, and local file permissions while redacting credentials/capabilities/result bodies.
+`doctor` should verify Codex compatibility, loopback state, config ownership/drift, upstream reachability, saving state, last optimizer activity, autostart state, and local file permissions while redacting credentials/capabilities/result bodies.
 
 ---
 
@@ -352,14 +427,15 @@ tokensaver doctor
 
 Planned:
 
-- macOS application packaging
+- macOS `.app` packaging
+- application/menu-bar icon assets
 - signing/notarization when appropriate
 - deterministic install/state paths
-- safe runtime lifecycle
-- update mechanism preserving user choices/state
-- first-class disconnect/uninstall
+- safe update lifecycle
+- update mechanism preserving preferences/savings state
+- first-class uninstall/disconnect
 - exact restoration of TokenSaver-owned Codex config
-- cleanup limited to TokenSaver files
+- cleanup limited to TokenSaver-owned files
 
 ---
 
@@ -376,6 +452,7 @@ Reliability gates:
 - interrupted streams
 - TokenSaver/Codex restart
 - machine reboot/start-at-login
+- forced termination / power-loss recovery
 
 Security/privacy gates:
 
@@ -383,7 +460,7 @@ Security/privacy gates:
 - strict local capability
 - no browser/CORS proxy surface
 - owner-only sensitive state
-- no credentials in logs
+- no credentials/capability in logs or UI
 - no original result bodies in routine telemetry
 - bounded logs/state
 - safe temporary files
@@ -393,6 +470,7 @@ Performance/compatibility gates:
 - optimizer overhead materially below saved context cost
 - bounded copies of huge results
 - compression/serialization benchmark
+- lightweight tray refresh
 - explicit supported Codex baseline
 - unsupported builds detected rather than guessed
 
@@ -404,13 +482,14 @@ Final release gates:
 4. recovery/quality structural suite
 5. transport integration suite
 6. config restoration/drift suite
-7. real Codex smoke test
-8. compaction-bypass test
-9. ON/OFF payload-diff invariant
-10. tray/backend state consistency
-11. privacy/log-redaction
-12. install/uninstall round-trip
-13. realistic long-session savings + quality benchmark
+7. desktop runtime/tray suite
+8. real Codex smoke test
+9. compaction-bypass test
+10. ON/OFF payload-diff invariant
+11. tray/backend state consistency
+12. privacy/log/UI-redaction
+13. install/uninstall round trip
+14. realistic long-session savings + quality benchmark
 
 ---
 
