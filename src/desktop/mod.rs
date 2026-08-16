@@ -34,6 +34,7 @@ struct TrayUi {
     saving: CheckMenuItem<Wry>,
     connect: MenuItem<Wry>,
     autostart: CheckMenuItem<Wry>,
+    quit: MenuItem<Wry>,
 }
 
 impl TrayUi {
@@ -45,21 +46,21 @@ impl TrayUi {
         let session = MenuItem::with_id(
             app,
             "session-savings",
-            "This session: 0 est. tokens · 0 results",
+            "This session: 0 B saved · 0 est. tokens · 0 results",
             false,
             None::<&str>,
         )?;
         let today = MenuItem::with_id(
             app,
             "today-savings",
-            "Today: 0 est. tokens · 0 results",
+            "Today: 0 B saved · 0 est. tokens · 0 results",
             false,
             None::<&str>,
         )?;
         let all_time = MenuItem::with_id(
             app,
             "all-time-savings",
-            "All time: 0 est. tokens · 0 results",
+            "All time: 0 B saved · 0 est. tokens · 0 results",
             false,
             None::<&str>,
         )?;
@@ -134,6 +135,7 @@ impl TrayUi {
             saving,
             connect,
             autostart,
+            quit,
         })
     }
 
@@ -178,27 +180,32 @@ impl TrayUi {
         let (connect_text, connect_enabled) = match snapshot.codex {
             DesktopCodexState::Disconnected => ("Connect to Codex", true),
             DesktopCodexState::Connecting => ("Connecting to Codex…", false),
+            DesktopCodexState::Connected if snapshot.active_requests > 0 => {
+                ("Disconnect from Codex — Request Active", false)
+            }
             DesktopCodexState::Connected => ("Disconnect from Codex", true),
             DesktopCodexState::Drifted => ("Configuration Drift — Fix Before Disconnect", false),
-            DesktopCodexState::Error => ("Reconnect Codex", true),
+            DesktopCodexState::Error => ("Reconnect Codex", snapshot.active_requests == 0),
         };
         self.connect.set_text(connect_text)?;
         self.connect.set_enabled(connect_enabled)?;
+        self.quit.set_enabled(snapshot.active_requests == 0)?;
 
         let title = match snapshot.codex {
             DesktopCodexState::Drifted | DesktopCodexState::Error => "TS !".to_owned(),
             _ if !snapshot.saving_enabled => "TS · Off".to_owned(),
             _ if snapshot.today.estimated_tokens_saved > 0 => format!(
-                "TS · {}",
+                "TS · ~{}",
                 format_compact_count(snapshot.today.estimated_tokens_saved)
             ),
             _ => "TS".to_owned(),
         };
         self.tray.set_title(Some(title))?;
         self.tray.set_tooltip(Some(format!(
-            "TokenSaver — {} — {} saved today",
+            "TokenSaver — {} — {} saved today ({} measured)",
             codex_text(snapshot.codex),
-            format_estimated_tokens(snapshot.today.estimated_tokens_saved)
+            format_estimated_tokens(snapshot.today.estimated_tokens_saved),
+            format_bytes(snapshot.today.bytes_saved)
         )))?;
         Ok(())
     }
@@ -231,11 +238,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             let allow_exit = Arc::new(AtomicBool::new(false));
             let shutdown_in_progress = Arc::new(AtomicBool::new(false));
 
-            register_menu_handler(
-                &tray,
-                controller.clone(),
-                shell_error.clone(),
-            );
+            register_menu_handler(&tray, controller.clone(), shell_error.clone());
 
             app.manage(DesktopManagedState {
                 controller: controller.clone(),
@@ -363,13 +366,13 @@ fn register_menu_handler(
                             "Codex configuration drift must be resolved before disconnect"
                                 .to_owned(),
                         ),
-                        DesktopCodexState::Error => {
-                            let _ = controller.disconnect().await;
-                            controller
+                        DesktopCodexState::Error => match controller.disconnect().await {
+                            Ok(()) => controller
                                 .connect()
                                 .await
-                                .map_err(|error| error.to_string())
-                        }
+                                .map_err(|error| error.to_string()),
+                            Err(error) => Err(error.to_string()),
+                        },
                     }
                 }
                 MENU_AUTOSTART => toggle_autostart(&app).map_err(|error| error.to_string()),
@@ -448,23 +451,27 @@ fn codex_text(state: DesktopCodexState) -> &'static str {
 
 fn format_savings(label: &str, savings: SavingsView) -> String {
     format!(
-        "{label}: {} · {} results",
+        "{label}: {} saved · {} · {} results / {} requests",
+        format_bytes(savings.bytes_saved),
         format_estimated_tokens(savings.estimated_tokens_saved),
-        savings.tool_results_compacted
+        savings.tool_results_compacted,
+        savings.aged_requests
     )
 }
 
 fn format_last_optimization(last: LastOptimizationView) -> String {
     let local_time = i64::try_from(last.observed_at_epoch_ms)
         .ok()
-        .and_then(|millis| DateTime::<Utc>::from_timestamp_millis(millis))
+        .and_then(DateTime::<Utc>::from_timestamp_millis)
         .map(|utc| utc.with_timezone(&Local).format("%H:%M").to_string())
         .unwrap_or_else(|| "--:--".to_owned());
     format!(
-        "Last optimization {local_time}: {} → {} · {}",
+        "Last optimization {local_time}: {} → {} · {} saved · {} · {} results",
         format_bytes(last.bytes_before),
         format_bytes(last.bytes_after),
-        format_estimated_tokens(last.estimated_tokens_saved)
+        format_bytes(last.bytes_saved),
+        format_estimated_tokens(last.estimated_tokens_saved),
+        last.tool_results_compacted
     )
 }
 
@@ -521,7 +528,10 @@ fn truncate_single_line(value: &str, max_chars: usize) -> String {
     if flattened.chars().count() <= max_chars {
         return flattened;
     }
-    let mut output = flattened.chars().take(max_chars.saturating_sub(1)).collect::<String>();
+    let mut output = flattened
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>();
     output.push('…');
     output
 }
