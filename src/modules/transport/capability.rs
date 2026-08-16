@@ -3,6 +3,7 @@ use rand::RngCore;
 
 const CAPABILITY_BYTES: usize = 32;
 const CAPABILITY_HEX_LENGTH: usize = CAPABILITY_BYTES * 2;
+const API_PREFIX: &str = "v1";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CallerCapability(String);
@@ -15,18 +16,22 @@ impl CallerCapability {
     }
 
     pub(crate) fn loopback_base_url(&self, port: u16) -> String {
-        format!("http://127.0.0.1:{port}/{}", self.0)
+        format!("http://127.0.0.1:{port}/{}/{API_PREFIX}", self.0)
     }
 
     /// Recover the port and capability from a TokenSaver-owned base URL. This is
-    /// used after a restart so a durable Codex config snapshot can reconnect to
-    /// exactly the endpoint it already owns instead of silently rotating it.
+    /// used after a restart so durable Codex config can reconnect to exactly the
+    /// endpoint it already owns instead of silently rotating it.
     pub(crate) fn from_loopback_base_url(url: &str) -> Option<(u16, Self)> {
         let rest = url.strip_prefix("http://127.0.0.1:")?;
-        let (port, secret) = rest.split_once('/')?;
-        if secret.len() != CAPABILITY_HEX_LENGTH
+        let (port, path) = rest.split_once('/')?;
+        let mut segments = path.split('/');
+        let secret = segments.next()?;
+        let api_prefix = segments.next()?;
+        if segments.next().is_some()
+            || api_prefix != API_PREFIX
+            || secret.len() != CAPABILITY_HEX_LENGTH
             || !secret.bytes().all(|byte| byte.is_ascii_hexdigit())
-            || secret.contains('/')
         {
             return None;
         }
@@ -37,20 +42,18 @@ impl CallerCapability {
         Some((port, Self(secret.to_ascii_lowercase())))
     }
 
-    /// Strip the secret prefix and return the upstream-style request path.
-    /// Comparison is constant-time for equal-length capability segments.
+    /// Strip the secret prefix while retaining `/v1`, which is part of the
+    /// configured built-in OpenAI base URL contract.
     pub(crate) fn authenticate_path<'a>(&self, path: &'a str) -> Option<&'a str> {
         let path = path.strip_prefix('/')?;
-        let (candidate, remainder) = path.split_once('/').unwrap_or((path, ""));
+        let (candidate, remainder) = path.split_once('/')?;
         if !constant_time_equal(candidate.as_bytes(), self.0.as_bytes()) {
             return None;
         }
-
-        if remainder.is_empty() {
-            Some("/")
-        } else {
-            path.get(candidate.len()..)
+        if remainder != API_PREFIX && !remainder.starts_with("v1/") {
+            return None;
         }
+        path.get(candidate.len()..)
     }
 
     #[cfg(test)]
