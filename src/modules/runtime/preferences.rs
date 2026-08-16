@@ -199,3 +199,72 @@ const fn default_frontier() -> usize {
 const fn default_preview_code_units() -> usize {
     DEFAULT_PREVIEW_CODE_UNITS
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::{
+        RuntimePreferencesError, RuntimePreferencesStore, DEFAULT_FRONTIER, DEFAULT_MIN_BYTES,
+        DEFAULT_PREVIEW_CODE_UNITS,
+    };
+
+    static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+    fn temp_path(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let sequence = TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "tokensaver-runtime-preferences-{}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("create temp root");
+        let path = root.join(name);
+        (root, path)
+    }
+
+    #[test]
+    fn legacy_v1_receives_conservative_policy_defaults() {
+        let (root, path) = temp_path("runtime-preferences.json");
+        fs::write(
+            &path,
+            r#"{
+  "schema_version": 1,
+  "saving_enabled": false,
+  "connect_on_launch": true
+}"#,
+        )
+        .expect("write legacy preferences");
+
+        let store = RuntimePreferencesStore::open(&path).expect("open legacy preferences");
+        let preferences = store.preferences();
+        assert!(!preferences.saving_enabled);
+        assert!(preferences.connect_on_launch);
+        assert_eq!(preferences.min_bytes, DEFAULT_MIN_BYTES);
+        assert_eq!(preferences.frontier, DEFAULT_FRONTIER);
+        assert_eq!(preferences.preview_code_units, DEFAULT_PREVIEW_CODE_UNITS);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn invalid_policy_values_are_rejected_before_persisting() {
+        let (root, path) = temp_path("runtime-preferences.json");
+        let mut store = RuntimePreferencesStore::open(&path).expect("open defaults");
+
+        assert!(matches!(
+            store.set_min_bytes(0),
+            Err(RuntimePreferencesError::InvalidValue(_))
+        ));
+        assert!(matches!(
+            store.set_frontier(257),
+            Err(RuntimePreferencesError::InvalidValue(_))
+        ));
+        assert!(matches!(
+            store.set_preview_code_units(63),
+            Err(RuntimePreferencesError::InvalidValue(_))
+        ));
+
+        let _ = fs::remove_dir_all(root);
+    }
+}
