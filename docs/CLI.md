@@ -46,6 +46,7 @@ tokensaver config set min-bytes <bytes>
 tokensaver config set frontier <count>
 tokensaver config set preview-code-units <count>
 tokensaver doctor
+tokensaver uninstall [--purge-state]
 tokensaver version
 ```
 
@@ -107,6 +108,30 @@ When the runtime is closed, changes are written to owner-private preferences and
 When the runtime is running but Codex is connected, structural aging-policy changes are refused. Disconnect first, change the policy, then reconnect. This avoids a request being evaluated under a policy that changes midway through the connected session.
 
 The simple saving on/off flag remains live-switchable.
+
+### `uninstall`
+
+Without arguments, `tokensaver uninstall` prints the safe uninstall sequence.
+
+The menu-bar action **Prepare for Uninstall…** is the authoritative detach step because it can use the real Tauri autostart manager. It:
+
+1. safely disconnects Codex through the normal request-drain/restoration transaction
+2. clears reconnect-on-launch intent
+3. disables Start at Login
+4. flushes persisted numeric telemetry
+5. exits only after those steps succeed
+
+After the menu-bar runtime has exited, optional destructive cleanup is available through:
+
+```text
+tokensaver uninstall --purge-state
+```
+
+The purge command refuses to run while the live control runtime is reachable. It also refuses all cleanup when `codex-config-snapshot.json` exists, because deleting restoration state could strand Codex on a dead TokenSaver endpoint.
+
+Only known TokenSaver-owned state is removed. Unknown files/directories are preserved and reported; cleanup is non-recursive. The purge command never edits Codex configuration.
+
+See `docs/PACKAGING.md` for the full install/update/uninstall contract.
 
 ## Persistent policy
 
