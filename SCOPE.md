@@ -8,6 +8,75 @@ The product boundary is intentionally strict:
 
 > TokenSaver optimizes context. It does not choose models, route providers, manage accounts, or orchestrate agents.
 
+## Architecture rule — modular monolith
+
+TokenSaver is implemented as a **modular monolith**.
+
+The application may run as one local product/runtime, but its internal modules must have explicit ownership and dependency boundaries. Modules communicate through public application interfaces; one module must not reach into another module's internal state, persistence implementation, or private types.
+
+The initial module boundaries are:
+
+- **aging** — deterministic tool-result eligibility and receipt generation
+- **transport** — Codex request/response transport, compression, streaming, and cancellation
+- **codex integration** — Codex configuration connect/disconnect and restoration
+- **telemetry** — savings events, aggregation, and statistics
+- **runtime** — lifecycle, local state, startup, and service supervision
+- **diagnostics** — health checks and doctor/status reporting
+- **desktop/tray** — user-facing control and observability
+
+The most important dependency rule is:
+
+> **The aging domain must remain transport-, Codex-, persistence-, and UI-agnostic.**
+
+Conceptually:
+
+```text
+Codex transport
+      ↓
+application boundary
+      ↓
+aging engine
+      ↓
+AgingResult
+      ↓
+transport forwards request
+```
+
+The aging module should expose a narrow contract equivalent in spirit to:
+
+```text
+ageToolResults(input, policy) -> AgingResult
+```
+
+It must not know whether the caller is Codex, a tray application, a CLI, or another future Responses-compatible client.
+
+Allowed dependency direction should remain roughly:
+
+```text
+desktop/tray ─┐
+CLI/doctor ───┼─> application services
+              │
+              ├─> runtime
+              ├─> codex integration
+              ├─> telemetry
+              └─> transport ─> aging
+```
+
+Forbidden examples include:
+
+- `aging -> tray`
+- `aging -> Codex configuration`
+- `aging -> telemetry storage`
+- `telemetry -> transport internals`
+- `codex integration -> aging internals`
+- UI code reading module persistence directly
+
+Cross-module behavior must go through explicit interfaces/application services. Shared code must stay small and contain only genuinely cross-cutting low-level concerns such as common errors, filesystem safety, or security primitives; `shared` must not become a dumping ground for domain logic.
+
+Physical process separation is not required. The first implementation may run tray, local transport, aging, telemetry, runtime, and configuration management in one process. If lifecycle or platform requirements later justify splitting a process, the module contracts should allow that without redesigning the domain.
+
+Architecture changes that break these boundaries require an explicit documented decision rather than an incidental implementation shortcut.
+
 ## In scope
 
 ### 1. Tool-result aging
@@ -82,7 +151,13 @@ TokenSaver may include benchmark and fixture tooling that evaluates the aging po
 
 ### 8. Safety and regression testing
 
-Tests for preservation, eligibility, Unicode safety, deterministic hashing, pass-through behavior, and protocol structure are part of the core product.
+Tests for preservation, eligibility, Unicode safety, deterministic hashing, pass-through behavior, protocol structure, and module-boundary enforcement are part of the core product.
+
+### 9. Minimal tray/menu-bar control surface
+
+The supported desktop build may provide a small tray/menu-bar application for TokenSaver-specific operation and observability, including connection state, token-saving state, measured byte savings, estimated token savings, recent compaction activity, start-at-login, diagnostics, and reversible Codex connect/disconnect controls.
+
+The tray is not a model/provider management surface.
 
 ## Required invariants
 
@@ -127,6 +202,10 @@ There must be a reliable mode in which TokenSaver performs no context rewriting.
 ### INV-10 — No original content in routine telemetry
 
 Savings logs and metrics must not contain full original tool-result bodies.
+
+### INV-11 — Module boundaries are enforced
+
+A module must not depend on another module's private implementation, storage, or state. Cross-module behavior must use explicit public interfaces/application services. In particular, the aging domain must never acquire a dependency on Codex transport/configuration, tray/UI, or telemetry persistence.
 
 ## Out of scope
 
@@ -213,9 +292,9 @@ Out of scope:
 - model speed leaderboards
 - unrelated latency dashboards
 - quota dashboards
-- system tray status unrelated to optimization
+- tray status unrelated to TokenSaver operation or optimization
 
-TokenSaver observability should answer: what was evaluated, what was compacted, why, and how much context was saved?
+TokenSaver observability should answer: is TokenSaver connected, what was evaluated, what was compacted, why, and how much context was saved?
 
 ### Tool execution platform
 
@@ -227,16 +306,19 @@ Any future exact-result recovery mechanism must remain narrowly tied to safely r
 
 The MVP is complete when TokenSaver can do all of the following:
 
-1. Accept a representative Codex-style request/history.
+1. Accept real supported Codex request/history traffic through its local transport.
 2. Detect eligible historical textual tool results.
 3. Compact them using a deterministic receipt.
 4. Preserve ineligible and recent results exactly.
-5. Forward the optimized request to the same intended upstream path.
+5. Forward the optimized request to the same intended native upstream path.
 6. Run in a hard pass-through mode.
 7. Report byte and estimated-token savings without logging original result bodies.
-8. Pass automated tests for every required invariant above.
+8. Preserve Codex's existing model selection, account flow, MCP tools, skills, subagents, permissions, and task state.
+9. Safely connect/disconnect Codex configuration and restore TokenSaver-owned changes.
+10. Provide a minimal macOS tray/menu-bar surface showing real connection and savings state.
+11. Pass automated tests for every required invariant above, including module-boundary rules.
 
-The MVP does **not** require a desktop GUI, tray application, provider catalog, model selector, multi-agent support, or account integration.
+The MVP does **not** require a provider catalog, model selector, external-model routing, multi-agent orchestration, or account-management system.
 
 ## Scope-change rule
 
@@ -245,6 +327,7 @@ Before adding a substantial feature, evaluate it against this test:
 1. Does it directly reduce repeated context/token usage, improve the correctness of that reduction, measure it, or safely integrate it?
 2. Can it be implemented without turning TokenSaver into a general router or agent platform?
 3. Does it preserve the fail-original and pass-through guarantees?
+4. Does it preserve the modular-monolith dependency boundaries, or is an explicit architecture decision required first?
 
 If the answer to any of these is no, the feature should be rejected or moved to a separate project.
 
@@ -252,4 +335,4 @@ If the answer to any of these is no, the feature should be rejected or moved to 
 
 TokenSaver is inspired by the tool-result-aging work in `duolahypercho/codex-router`, but Codex Router has a much broader mission. TokenSaver should study relevant upstream improvements while selectively adopting only mechanisms that fit this scope.
 
-Upstream changes related to routing, provider support, account/session management, desktop UI, harness integrations, model catalogs, vision, or multi-agent behavior are not automatically relevant to TokenSaver.
+Upstream changes related to routing, provider support, account/session management, broad management UI, harness integrations, model catalogs, vision, or multi-agent behavior are not automatically relevant to TokenSaver.
