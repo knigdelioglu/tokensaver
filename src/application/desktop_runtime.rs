@@ -87,6 +87,7 @@ pub(crate) enum DesktopRuntimeError {
     Preferences(RuntimePreferencesError),
     Savings(SavingsStoreError),
     Codex(CodexConnectionError),
+    ActiveRequests(usize),
 }
 
 impl fmt::Display for DesktopRuntimeError {
@@ -96,6 +97,10 @@ impl fmt::Display for DesktopRuntimeError {
             Self::Preferences(error) => write!(formatter, "runtime preferences failed: {error}"),
             Self::Savings(error) => write!(formatter, "savings persistence failed: {error}"),
             Self::Codex(error) => write!(formatter, "Codex connection failed: {error}"),
+            Self::ActiveRequests(count) => write!(
+                formatter,
+                "cannot disconnect TokenSaver while {count} Codex request(s) are still active"
+            ),
         }
     }
 }
@@ -107,6 +112,7 @@ impl std::error::Error for DesktopRuntimeError {
             Self::Preferences(error) => Some(error),
             Self::Savings(error) => Some(error),
             Self::Codex(error) => Some(error),
+            Self::ActiveRequests(_) => None,
         }
     }
 }
@@ -294,12 +300,15 @@ impl DesktopRuntimeController {
 
     pub(crate) async fn disconnect(&self) -> Result<(), DesktopRuntimeError> {
         let _operation = self.operation.lock().await;
-        let record = {
+        let active = {
             let inner = self.inner.lock().await;
-            inner.connection.as_ref().map(|active| active.record.clone())
+            inner
+                .connection
+                .as_ref()
+                .map(|connection| (connection.record.clone(), connection.control.clone()))
         };
 
-        let Some(record) = record else {
+        let Some((record, control)) = active else {
             self.status.update(|runtime| {
                 runtime.service = ServiceStatus::Running;
                 runtime.codex = CodexStatus::Disconnected;
@@ -309,7 +318,15 @@ impl DesktopRuntimeController {
             return Ok(());
         };
 
+        let active_requests = control.begin_drain();
+        if active_requests > 0 {
+            control.resume_accepting();
+            self.status.update(|runtime| runtime.active_requests = active_requests);
+            return Err(DesktopRuntimeError::ActiveRequests(active_requests));
+        }
+
         if let Err(error) = disconnect_native_codex(&record) {
+            control.resume_accepting();
             self.status.update(|runtime| {
                 runtime.service = ServiceStatus::Running;
                 runtime.codex = CodexStatus::Error;
