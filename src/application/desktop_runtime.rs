@@ -86,6 +86,7 @@ pub(crate) struct DesktopRuntimeSnapshot {
     pub(crate) saving_enabled: bool,
     pub(crate) connect_on_launch: bool,
     pub(crate) active_requests: usize,
+    pub(crate) dropped_telemetry_observations: u64,
     pub(crate) policy: AgingPolicyView,
     pub(crate) session: SavingsView,
     pub(crate) today: SavingsView,
@@ -540,6 +541,14 @@ impl DesktopRuntimeController {
 
     pub(crate) async fn snapshot(&self) -> DesktopRuntimeSnapshot {
         self.refresh_connection_health().await;
+        let dropped_telemetry_observations = {
+            let inner = self.inner.lock().await;
+            inner
+                .connection
+                .as_ref()
+                .map(|active| active.control.dropped_observations())
+                .unwrap_or(0)
+        };
         let local_day = local_day_key();
         let runtime = self.status.snapshot();
         let preferences = self.preferences.lock().await.preferences();
@@ -552,6 +561,7 @@ impl DesktopRuntimeController {
             saving_enabled: runtime.saving_enabled,
             connect_on_launch: preferences.connect_on_launch,
             active_requests: runtime.active_requests,
+            dropped_telemetry_observations,
             policy: AgingPolicyView {
                 min_bytes: preferences.min_bytes,
                 frontier: preferences.frontier,
