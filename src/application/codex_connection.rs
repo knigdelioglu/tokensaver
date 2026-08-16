@@ -130,3 +130,89 @@ pub(crate) fn disconnect_native_codex(
     disconnect_with_snapshot(&record.config_path, &record.snapshot_path)
         .map_err(CodexConnectionError::Config)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::{disconnect_native_codex, prepare_native_chatgpt_connection_at};
+    use crate::modules::aging::AgingPolicy;
+
+    static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+    fn temp_paths() -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+        let sequence = TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "tokensaver-phase3-{}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("create temp root");
+        let config = root.join("config.toml");
+        let snapshot = root.join("codex-config-snapshot.json");
+        (root, config, snapshot)
+    }
+
+    #[tokio::test]
+    async fn prepare_then_disconnect_restores_unrelated_codex_config() {
+        let (root, config, snapshot_path) = temp_paths();
+        let original = "model = \"gpt-test\"\n[mcp_servers.demo]\ncommand = \"demo\"\n";
+        fs::write(&config, original).expect("write config");
+
+        let prepared = prepare_native_chatgpt_connection_at(
+            config.clone(),
+            snapshot_path.clone(),
+            0,
+            AgingPolicy::default(),
+        )
+        .await
+        .expect("prepare connection");
+        let endpoint = prepared.control.codex_base_url();
+        let connected = fs::read_to_string(&config).expect("connected config");
+        assert!(connected.contains(&format!("openai_base_url = \"{endpoint}\"")));
+        assert!(snapshot_path.exists());
+
+        let record = prepared.record.clone();
+        drop(prepared);
+        disconnect_native_codex(&record).expect("disconnect");
+        let restored = fs::read_to_string(&config).expect("restored config");
+        assert!(!restored.contains("openai_base_url"));
+        assert!(restored.contains("model = \"gpt-test\""));
+        assert!(restored.contains("[mcp_servers.demo]"));
+        assert!(!snapshot_path.exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn restart_reuses_persisted_port_and_capability() {
+        let (root, config, snapshot_path) = temp_paths();
+        fs::write(&config, "model = \"gpt-test\"\n").expect("write config");
+
+        let first = prepare_native_chatgpt_connection_at(
+            config.clone(),
+            snapshot_path.clone(),
+            0,
+            AgingPolicy::default(),
+        )
+        .await
+        .expect("first prepare");
+        let first_endpoint = first.control.codex_base_url();
+        drop(first);
+
+        let second = prepare_native_chatgpt_connection_at(
+            config.clone(),
+            snapshot_path.clone(),
+            0,
+            AgingPolicy::default(),
+        )
+        .await
+        .expect("restart prepare");
+        assert_eq!(second.control.codex_base_url(), first_endpoint);
+
+        let record = second.record.clone();
+        drop(second);
+        disconnect_native_codex(&record).expect("disconnect");
+        let _ = fs::remove_dir_all(root);
+    }
+}
