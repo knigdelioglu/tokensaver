@@ -49,6 +49,9 @@ Desktop.ini
 playwright-report/
 test-results/
 
+# Local release-validation evidence (template remains tracked)
+validation/release-manifest.json
+
 # Package-manager debug logs
 npm-debug.log*
 yarn-debug.log*
