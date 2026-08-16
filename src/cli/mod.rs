@@ -279,11 +279,24 @@ async fn runtime_request(request: ControlRequest) -> Result<ControlResponse, Box
 
 fn print_status(snapshot: &ControlSnapshot) {
     println!("Runtime: {}", snapshot.service);
-    println!("Codex: {}", snapshot.codex);
+    println!("Codex config: {}", snapshot.codex);
     println!("Token saving: {}", on_off(snapshot.saving_enabled));
     println!("Active requests: {}", snapshot.active_requests);
+    if snapshot.session.requests_observed == 0 {
+        println!("Traffic: not seen this session");
+    } else {
+        println!(
+            "Traffic: seen ({} requests this session)",
+            snapshot.session.requests_observed
+        );
+    }
     if let Some(error) = snapshot.last_error.as_deref() {
         println!("Health: {}", single_line(error));
+    } else if snapshot.dropped_telemetry_observations > 0 {
+        println!(
+            "Health: telemetry incomplete ({} observations dropped)",
+            snapshot.dropped_telemetry_observations
+        );
     } else {
         println!("Health: ok");
     }
@@ -308,6 +321,23 @@ fn print_settings(settings: SettingsSnapshot) {
 }
 
 fn print_savings_control(savings: &ControlSavings) {
+    println!("  observed requests: {}", savings.requests_observed);
+    println!("  Responses requests: {}", savings.responses_requests);
+    println!("  aged requests: {}", savings.aged_requests);
+    println!("  no eligible result: {}", savings.no_eligible_requests);
+    println!("  eligible but no savings: {}", savings.no_savings_requests);
+    println!("  fail-original requests: {}", savings.fail_original_requests);
+    println!("  saving-off requests: {}", savings.disabled_requests);
+    println!(
+        "  native passthrough / compaction bypass: {} / {}",
+        savings.native_passthrough_requests, savings.compaction_bypass_requests
+    );
+    println!(
+        "  tool results evaluated / eligible / compacted: {} / {} / {}",
+        savings.tool_results_evaluated,
+        savings.tool_results_eligible,
+        savings.tool_results_compacted
+    );
     println!(
         "  measured bytes saved: {}",
         format_bytes(savings.bytes_saved)
@@ -316,11 +346,26 @@ fn print_savings_control(savings: &ControlSavings) {
         "  estimated tokens saved: ~{}",
         format_count(savings.estimated_tokens_saved)
     );
-    println!("  compacted results: {}", savings.tool_results_compacted);
-    println!("  aged requests: {}", savings.aged_requests);
 }
 
 fn print_savings_stored(savings: StoredSavingsView) {
+    println!("  observed requests: {}", savings.requests_observed);
+    println!("  Responses requests: {}", savings.responses_requests);
+    println!("  aged requests: {}", savings.aged_requests);
+    println!("  no eligible result: {}", savings.no_eligible_requests);
+    println!("  eligible but no savings: {}", savings.no_savings_requests);
+    println!("  fail-original requests: {}", savings.fail_original_requests);
+    println!("  saving-off requests: {}", savings.disabled_requests);
+    println!(
+        "  native passthrough / compaction bypass: {} / {}",
+        savings.native_passthrough_requests, savings.compaction_bypass_requests
+    );
+    println!(
+        "  tool results evaluated / eligible / compacted: {} / {} / {}",
+        savings.tool_results_evaluated,
+        savings.tool_results_eligible,
+        savings.tool_results_compacted
+    );
     println!(
         "  measured bytes saved: {}",
         format_bytes(savings.bytes_saved)
@@ -329,8 +374,6 @@ fn print_savings_stored(savings: StoredSavingsView) {
         "  estimated tokens saved: ~{}",
         format_count(savings.estimated_tokens_saved)
     );
-    println!("  compacted results: {}", savings.tool_results_compacted);
-    println!("  aged requests: {}", savings.aged_requests);
 }
 
 fn print_help() {
