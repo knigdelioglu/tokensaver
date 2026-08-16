@@ -14,6 +14,8 @@ use crate::modules::transport::{
 };
 use crate::shared::security::redact_local_secrets;
 
+const OBSERVATION_CHANNEL_CAPACITY: usize = 1024;
+
 #[derive(Clone, Debug)]
 pub(crate) struct CodexConnectionRecord {
     pub(crate) config_path: PathBuf,
@@ -25,7 +27,7 @@ pub(crate) struct PreparedCodexConnection {
     pub(crate) server: BoundTransport,
     pub(crate) control: TransportControl,
     pub(crate) record: CodexConnectionRecord,
-    pub(crate) observations: mpsc::UnboundedReceiver<TransportObservation>,
+    pub(crate) observations: mpsc::Receiver<TransportObservation>,
 }
 
 #[derive(Debug)]
@@ -112,7 +114,7 @@ pub(super) async fn prepare_native_codex_connection_at(
         TransportSettings::native_codex(requested_port, aging_policy)
     };
 
-    let (observation_tx, observation_rx) = mpsc::unbounded_channel();
+    let (observation_tx, observation_rx) = mpsc::channel(OBSERVATION_CHANNEL_CAPACITY);
     let server = BoundTransport::bind(settings.with_observer(observation_tx))
         .await
         .map_err(CodexConnectionError::Transport)?;
