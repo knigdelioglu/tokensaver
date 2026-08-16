@@ -18,6 +18,7 @@ use crate::shared::security::redact_local_secrets;
 const MENU_SAVING: &str = "saving-toggle";
 const MENU_CONNECT: &str = "connect-toggle";
 const MENU_AUTOSTART: &str = "autostart-toggle";
+const MENU_PREPARE_UNINSTALL: &str = "prepare-uninstall";
 const MENU_QUIT: &str = "quit";
 
 #[derive(Clone)]
@@ -35,6 +36,7 @@ struct TrayUi {
     saving: CheckMenuItem<Wry>,
     connect: MenuItem<Wry>,
     autostart: CheckMenuItem<Wry>,
+    prepare_uninstall: MenuItem<Wry>,
     quit: MenuItem<Wry>,
 }
 
@@ -95,6 +97,13 @@ impl TrayUi {
             false,
             None::<&str>,
         )?;
+        let prepare_uninstall = MenuItem::with_id(
+            app,
+            MENU_PREPARE_UNINSTALL,
+            "Prepare for Uninstall…",
+            true,
+            None::<&str>,
+        )?;
         let quit = MenuItem::with_id(app, MENU_QUIT, "Quit TokenSaver", true, None::<&str>)?;
 
         let menu = MenuBuilder::new(app)
@@ -112,6 +121,7 @@ impl TrayUi {
             .item(&connect)
             .item(&autostart)
             .separator()
+            .item(&prepare_uninstall)
             .item(&quit)
             .build()?;
 
@@ -136,6 +146,7 @@ impl TrayUi {
             saving,
             connect,
             autostart,
+            prepare_uninstall,
             quit,
         })
     }
@@ -190,6 +201,13 @@ impl TrayUi {
         };
         self.connect.set_text(connect_text)?;
         self.connect.set_enabled(connect_enabled)?;
+
+        let uninstall_enabled = snapshot.active_requests == 0
+            && !matches!(
+                snapshot.codex,
+                DesktopCodexState::Connecting | DesktopCodexState::Drifted
+            );
+        self.prepare_uninstall.set_enabled(uninstall_enabled)?;
         self.quit.set_enabled(snapshot.active_requests == 0)?;
 
         let title = match snapshot.codex {
@@ -239,7 +257,13 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             let allow_exit = Arc::new(AtomicBool::new(false));
             let shutdown_in_progress = Arc::new(AtomicBool::new(false));
 
-            register_menu_handler(&tray, controller.clone(), shell_error.clone());
+            register_menu_handler(
+                &tray,
+                controller.clone(),
+                shell_error.clone(),
+                allow_exit.clone(),
+                shutdown_in_progress.clone(),
+            );
 
             app.manage(DesktopManagedState {
                 controller: controller.clone(),
@@ -329,12 +353,41 @@ fn register_menu_handler(
     tray: &TrayUi,
     controller: DesktopRuntimeController,
     shell_error: Arc<RwLock<Option<String>>>,
+    allow_exit: Arc<AtomicBool>,
+    shutdown_in_progress: Arc<AtomicBool>,
 ) {
     let tray_ui = tray.clone();
     tray.tray.on_menu_event(move |app, event| {
         let event_id = event.id().as_ref().to_owned();
         if event_id == MENU_QUIT {
             app.exit(0);
+            return;
+        }
+
+        if event_id == MENU_PREPARE_UNINSTALL {
+            if shutdown_in_progress.swap(true, Ordering::AcqRel) {
+                return;
+            }
+
+            let app = app.clone();
+            let controller = controller.clone();
+            let tray_ui = tray_ui.clone();
+            let shell_error = shell_error.clone();
+            let allow_exit = allow_exit.clone();
+            let shutdown_in_progress = shutdown_in_progress.clone();
+            tauri::async_runtime::spawn(async move {
+                match prepare_for_uninstall(&app, &controller).await {
+                    Ok(()) => {
+                        allow_exit.store(true, Ordering::Release);
+                        app.exit(0);
+                    }
+                    Err(error) => {
+                        set_shell_error(&shell_error, Some(error));
+                        shutdown_in_progress.store(false, Ordering::Release);
+                        refresh_tray(&app, &controller, &tray_ui, &shell_error).await;
+                    }
+                }
+            });
             return;
         }
 
@@ -387,6 +440,29 @@ fn register_menu_handler(
             refresh_tray(&app, &controller, &tray_ui, &shell_error).await;
         });
     });
+}
+
+async fn prepare_for_uninstall(
+    app: &AppHandle<Wry>,
+    controller: &DesktopRuntimeController,
+) -> Result<(), String> {
+    // Explicit disconnect clears reconnect-on-launch and uses the same request
+    // drain + Codex restoration transaction as the normal tray action.
+    controller
+        .disconnect()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let autostart = app.autolaunch();
+    if autostart.is_enabled().map_err(|error| error.to_string())? {
+        autostart.disable().map_err(|error| error.to_string())?;
+    }
+
+    controller
+        .flush_persistent()
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 async fn refresh_tray(
