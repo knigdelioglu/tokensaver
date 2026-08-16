@@ -1,0 +1,60 @@
+name: One-shot rustfmt fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/rustfmt-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  format-and-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Fix owned-path borrow and apply rustfmt
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/modules/transport/server.rs')
+          source = path.read_text()
+          old = '''    let Some(local_path) = state.capability.authenticate_path(request.uri().path()) else {
+              return empty_response(StatusCode::NOT_FOUND);
+          };
+          let Some(route) = native_route(local_path) else {'''
+          new = '''    let Some(local_path) = state.capability.authenticate_path(request.uri().path()) else {
+              return empty_response(StatusCode::NOT_FOUND);
+          };
+          let local_path = local_path.to_owned();
+          let Some(route) = native_route(&local_path) else {'''
+          if old not in source:
+              raise SystemExit('expected authenticate/native_route block not found')
+          source = source.replace(old, new, 1)
+          source = source.replace('let Some(upstream_path) = upstream_path(local_path) else {', 'let Some(upstream_path) = upstream_path(&local_path) else {', 1)
+          source = source.replace('        local_path,\n        policy,', '        &local_path,\n        policy,', 1)
+          path.write_text(source)
+          PY
+
+          cargo fmt --all
+
+      - name: Commit deterministic formatting/fix
+        run: |
+          if git diff --quiet; then
+            echo 'No formatting/fix changes needed.'
+            exit 0
+          fi
+          git config user.name 'TokenSaver Validation Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add src tests
+          git commit -m 'fix: resolve compile error and apply rustfmt'
+          git push origin HEAD:main
