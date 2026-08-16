@@ -6,6 +6,7 @@ pub(crate) const BYTES_PER_TOKEN_ESTIMATE: u64 = 4;
 pub(crate) enum OptimizationOutcome {
     Disabled,
     Bypassed,
+    NativePassthrough,
     FailOriginal,
     EvaluatedNoEligibleResult,
     EvaluatedNoSavings,
