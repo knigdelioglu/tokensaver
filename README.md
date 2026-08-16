@@ -244,11 +244,19 @@ release-only Tauri config overlay
 TokenSaver.app + DMG
 ```
 
-Use the authored packaging entry point:
+Development/local packaging:
 
 ```bash
 bash scripts/package-macos.sh
 ```
+
+Validated project release packaging:
+
+```bash
+bash scripts/release-macos.sh
+```
+
+The release path is fail-closed: it requires a local validation manifest tied to the exact source commit, TokenSaver version, pinned Codex protocol baseline, exact validated `codex --version` identity, and all 15 release gates. The completed manifest is gitignored; the repository ships only an all-false example template.
 
 `bundle.createUpdaterArtifacts` is intentionally disabled until TokenSaver has a trusted update endpoint, updater public key, protected signing material, signed artifacts, and tested recovery behavior.
 
@@ -257,6 +265,29 @@ Safe manual update uses normal Quit so Codex config is restored while `connect_o
 Safe uninstall uses **Prepare for Uninstall…** to disconnect Codex, clear reconnect intent, disable Start at Login, flush telemetry, and exit. Optional `tokensaver uninstall --purge-state` then deletes only known TokenSaver-owned state, refuses an active restoration snapshot, and preserves unknown entries.
 
 See [docs/PACKAGING.md](./docs/PACKAGING.md).
+
+## Phase 8 hardening
+
+Phase 8 adds finite resource limits and evidence-based release/compatibility behavior without changing TokenSaver's product scope.
+
+Runtime bounds currently authored:
+
+- encoded native request: **64 MiB max**
+- decoded inspection body: **256 MiB max**
+- native concurrent requests: **16 max**
+- upstream connect timeout: **15 seconds**
+- content-free telemetry observation queue: **1024 max**
+- owner-local control clients: **16 max**
+- control message/response: **64 KiB max**
+- control connect/read/write timeout: **5 seconds**
+
+A saturated telemetry queue never blocks inference; it increments a dropped-observation health counter and doctor warns that savings may be incomplete. Savings observations are emitted only after the upstream request returns response headers, so an upstream connection failure does not inflate savings.
+
+Codex compatibility is tied to pinned protocol baseline `openai/codex@9ded177ce7c1c0bd2047f902936c177612ab3434` and an explicitly validated exact `codex --version` identity. Unknown builds WARN rather than being silently declared supported. The validation allow-list remains empty until the final executed validation pass proves a build.
+
+Source-level error formatting also redacts capability-bearing endpoints, drift values, and parser context rather than relying only on UI/CLI wrappers.
+
+See [docs/HARDENING.md](./docs/HARDENING.md).
 
 ## Design principles
 
@@ -279,10 +310,16 @@ A receipt is used only when it is smaller than its source.
 Omitted bytes are never presented as known content.
 
 ### Measure truthfully
-Directly measured bytes, estimated tokens, and provider-reported usage are distinct metrics.
+Directly measured bytes, estimated tokens, provider-reported usage, and telemetry completeness are distinct facts.
 
 ### Safe lifecycle over convenience
 TokenSaver refuses unsafe config restoration, disconnect, normal process exit, or state purge.
+
+### Bound degradation
+Resource saturation is bounded and surfaced rather than translated into unbounded memory/task growth.
+
+### Evidence before release claims
+Unknown Codex builds and missing validation manifests remain unproven rather than being guessed safe.
 
 ## Required invariants
 
@@ -304,6 +341,9 @@ Among the project-wide invariants:
 14. normal desktop shutdown does not intentionally strand Codex on a dead local endpoint
 15. CLI control never becomes arbitrary local command execution
 16. uninstall cleanup never deletes restoration proof or unknown user-owned entries
+17. runtime request/queue/control growth is explicitly bounded
+18. unknown Codex builds are not silently release-certified
+19. release packaging fails closed without exact validation evidence
 
 The complete invariant set is in [SCOPE.md](./SCOPE.md).
 
@@ -317,9 +357,9 @@ The complete invariant set is in [SCOPE.md](./SCOPE.md).
 - **Phase 5 — macOS runtime/tray:** implemented, validation deferred
 - **Phase 6 — CLI/doctor:** implemented, validation deferred
 - **Phase 7 — Packaging/update/uninstall:** implemented, validation deferred
-- **Phase 8 — Hardening/release gates:** not started
+- **Phase 8 — Hardening/release gates:** implemented, validation deferred
 
-Per project instruction, implementation has been authored **without running tests, builds, linters, formatters, CI, benchmarks, CLI/doctor smoke tests, package builds, or live Codex validation**. Final execution is intentionally deferred.
+Per project instruction, implementation has been authored **without running tests, builds, cargo checks, linters, formatters, CI, benchmarks, CLI/doctor smoke tests, package builds, release verification, or live Codex validation**. Final execution is intentionally deferred.
 
 See [ROADMAP.md](./ROADMAP.md).
 
@@ -333,6 +373,7 @@ See [ROADMAP.md](./ROADMAP.md).
 - [docs/DESKTOP_RUNTIME.md](./docs/DESKTOP_RUNTIME.md) — macOS runtime/tray lifecycle contract
 - [docs/CLI.md](./docs/CLI.md) — CLI/control-channel/doctor contract
 - [docs/PACKAGING.md](./docs/PACKAGING.md) — packaging/update/uninstall contract
+- [docs/HARDENING.md](./docs/HARDENING.md) — runtime bounds, compatibility, and fail-closed release contract
 - [docs/UPSTREAM_REFERENCE.md](./docs/UPSTREAM_REFERENCE.md) — pinned Codex Router behavior adopted/rejected
 - [AGENTS.md](./AGENTS.md) — implementation guardrails
 
