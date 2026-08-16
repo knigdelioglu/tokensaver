@@ -111,8 +111,14 @@ mod tests {
         let preferences = RuntimePreferences::default();
         let policy = AgingPolicy::default();
 
-        assert!(!preferences.saving_enabled, "fresh product installs are opt-in");
-        assert!(policy.enabled, "the pure aging domain remains enabled by default when invoked directly");
+        assert!(
+            !preferences.saving_enabled,
+            "fresh product installs are opt-in"
+        );
+        assert!(
+            policy.enabled,
+            "the pure aging domain remains enabled by default when invoked directly"
+        );
         assert_eq!(preferences.min_bytes, policy.min_bytes);
         assert_eq!(preferences.frontier, policy.frontier);
         assert_eq!(preferences.preview_code_units, policy.preview_code_units);
