@@ -6,7 +6,7 @@ use std::path::Path;
 use chrono::Local;
 
 use crate::modules::telemetry::{DurableSavingsStore, SavingsStoreError, SavingsSummary};
-use crate::shared::paths::product_data_dir;
+use crate::shared::paths::ensure_product_data_dir;
 
 const SAVINGS_FILE: &str = "savings.json";
 
@@ -61,7 +61,7 @@ impl From<SavingsStoreError> for StatsError {
 }
 
 pub(crate) fn load_product_stats() -> Result<StoredStats, StatsError> {
-    let data_dir = product_data_dir()?;
+    let data_dir = ensure_product_data_dir()?;
     load_stored_stats(&data_dir)
 }
 
