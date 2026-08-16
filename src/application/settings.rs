@@ -4,6 +4,7 @@ use std::io;
 use std::path::Path;
 
 use crate::modules::runtime::{RuntimePreferencesError, RuntimePreferencesStore};
+use crate::shared::paths::product_data_dir;
 
 const PREFERENCES_FILE: &str = "runtime-preferences.json";
 
@@ -55,20 +56,26 @@ impl From<RuntimePreferencesError> for SettingsError {
     }
 }
 
-pub(crate) fn load_settings(data_dir: &Path) -> Result<SettingsSnapshot, SettingsError> {
-    fs::create_dir_all(data_dir)?;
-    let store = RuntimePreferencesStore::open(data_dir.join(PREFERENCES_FILE))?;
-    let preferences = store.preferences();
-    Ok(SettingsSnapshot {
-        saving_enabled: preferences.saving_enabled,
-        connect_on_launch: preferences.connect_on_launch,
-        min_bytes: preferences.min_bytes,
-        frontier: preferences.frontier,
-        preview_code_units: preferences.preview_code_units,
-    })
+pub(crate) fn load_product_settings() -> Result<SettingsSnapshot, SettingsError> {
+    let data_dir = product_data_dir()?;
+    load_settings(&data_dir)
 }
 
-pub(crate) fn set_numeric_setting_offline(
+pub(crate) fn set_product_numeric_setting(
+    key: &str,
+    value: usize,
+) -> Result<SettingsSnapshot, SettingsError> {
+    let data_dir = product_data_dir()?;
+    set_numeric_setting_offline(&data_dir, key, value)
+}
+
+fn load_settings(data_dir: &Path) -> Result<SettingsSnapshot, SettingsError> {
+    fs::create_dir_all(data_dir)?;
+    let store = RuntimePreferencesStore::open(data_dir.join(PREFERENCES_FILE))?;
+    Ok(snapshot(store.preferences()))
+}
+
+fn set_numeric_setting_offline(
     data_dir: &Path,
     key: &str,
     value: usize,
@@ -81,12 +88,15 @@ pub(crate) fn set_numeric_setting_offline(
         "preview-code-units" => store.set_preview_code_units(value)?,
         _ => return Err(SettingsError::UnknownKey(key.to_owned())),
     }
-    let preferences = store.preferences();
-    Ok(SettingsSnapshot {
+    Ok(snapshot(store.preferences()))
+}
+
+fn snapshot(preferences: crate::modules::runtime::RuntimePreferences) -> SettingsSnapshot {
+    SettingsSnapshot {
         saving_enabled: preferences.saving_enabled,
         connect_on_launch: preferences.connect_on_launch,
         min_bytes: preferences.min_bytes,
         frontier: preferences.frontier,
         preview_code_units: preferences.preview_code_units,
-    })
+    }
 }
