@@ -14,7 +14,9 @@ mod model;
 mod policy;
 mod receipt;
 
-pub(crate) use engine::{AgingDecision, AgingResult, AgingSkipReason, AgingStats, age_tool_results};
+pub(crate) use engine::{
+    AgingDecision, AgingResult, AgingSkipReason, AgingStats, age_tool_results,
+};
 pub(crate) use model::{HistoryItem, ToolOutput, ToolResultKind};
 pub(crate) use policy::AgingPolicy;
 pub(crate) use receipt::{
