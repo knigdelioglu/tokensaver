@@ -113,7 +113,7 @@ fn remove_if_present(
         Ok(metadata) => {
             // Never follow or recursively remove directories through an expected
             // file name. Unknown shape is preserved for manual inspection.
-            if !metadata.file_type().is_file() && !metadata.file_type().is_socket() {
+            if !removable_owned_file_type(&metadata, file_name) {
                 return Ok(());
             }
             fs::remove_file(&path)?;
@@ -123,6 +123,24 @@ fn remove_if_present(
         Err(error) => return Err(error.into()),
     }
     Ok(())
+}
+
+fn removable_owned_file_type(metadata: &fs::Metadata, file_name: &str) -> bool {
+    if metadata.file_type().is_file() {
+        return true;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        return file_name == CONTROL_SOCKET_FILE && metadata.file_type().is_socket();
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = file_name;
+        false
+    }
 }
 
 fn remove_known_atomic_temps(
