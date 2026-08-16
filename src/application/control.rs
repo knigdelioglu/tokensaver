@@ -28,8 +28,19 @@ pub(crate) enum ControlRequest {
     ConfigSet { key: String, value: usize },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub(crate) struct ControlSavings {
+    pub(crate) requests_observed: u64,
+    pub(crate) responses_requests: u64,
+    pub(crate) compaction_bypass_requests: u64,
+    pub(crate) native_passthrough_requests: u64,
+    pub(crate) disabled_requests: u64,
+    pub(crate) fail_original_requests: u64,
+    pub(crate) no_eligible_requests: u64,
+    pub(crate) no_savings_requests: u64,
+    pub(crate) tool_results_evaluated: u64,
+    pub(crate) tool_results_eligible: u64,
     pub(crate) bytes_saved: u64,
     pub(crate) estimated_tokens_saved: u64,
     pub(crate) tool_results_compacted: u64,
@@ -343,6 +354,16 @@ fn policy_to_control(policy: AgingPolicyView) -> ControlPolicy {
 
 fn savings_to_control(savings: SavingsView) -> ControlSavings {
     ControlSavings {
+        requests_observed: savings.requests_observed,
+        responses_requests: savings.responses_requests,
+        compaction_bypass_requests: savings.compaction_bypass_requests,
+        native_passthrough_requests: savings.native_passthrough_requests,
+        disabled_requests: savings.disabled_requests,
+        fail_original_requests: savings.fail_original_requests,
+        no_eligible_requests: savings.no_eligible_requests,
+        no_savings_requests: savings.no_savings_requests,
+        tool_results_evaluated: savings.tool_results_evaluated,
+        tool_results_eligible: savings.tool_results_eligible,
         bytes_saved: savings.bytes_saved,
         estimated_tokens_saved: savings.estimated_tokens_saved,
         tool_results_compacted: savings.tool_results_compacted,
