@@ -71,6 +71,14 @@ In particular:
 - do not expose a generic unauthenticated upstream proxy
 - hard OFF mode must perform no aging rewrite
 
+## Test execution policy
+
+During the current implementation sequence, **do not run tests, builds, linters, formatters, CI workflows, or validation commands unless the user explicitly asks for the final test/validation pass**.
+
+This does not prohibit writing test sources alongside the phase that introduces behavior. Tests should be authored now and executed only when the user later requests the final validation run.
+
+Do not mark an unexecuted test suite as passing. Distinguish implementation completion from validation completion in reports and roadmap status.
+
 ## Implementation discipline
 
 - Implement only behavior owned by the current roadmap phase unless a prerequisite is unavoidable.
@@ -78,8 +86,8 @@ In particular:
 - Prefer explicit typed boundaries over shared mutable state.
 - Keep transformation functions deterministic where practical.
 - Keep sensitive content out of routine logs and fixtures.
-- Add tests with the phase that introduces behavior.
-- When a phase's exit criteria are genuinely satisfied, update `ROADMAP.md` status in the same change set.
+- Add tests with the phase that introduces behavior, but follow the deferred test-execution policy above.
+- When a phase's implementation is complete but tests are intentionally deferred, record that distinction rather than claiming validation passed.
 
 ## Upstream usage
 
