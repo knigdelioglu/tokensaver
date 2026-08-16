@@ -17,8 +17,8 @@ use crate::modules::codex_integration::{
     connection_state_with_snapshot, CodexConnectionState,
 };
 use crate::modules::runtime::{
-    CodexStatus, RuntimePreferencesError, RuntimePreferencesStore, RuntimeStatusStore,
-    ServiceStatus,
+    CodexStatus, RuntimePreferences, RuntimePreferencesError, RuntimePreferencesStore,
+    RuntimeStatusStore, ServiceStatus,
 };
 use crate::modules::telemetry::{
     DurableSavingsStore, LastOptimization, SavingsLedger, SavingsStoreError, SavingsSummary,
@@ -70,12 +70,21 @@ pub(crate) struct LastOptimizationView {
     pub(crate) tool_results_compacted: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AgingPolicyView {
+    pub(crate) min_bytes: usize,
+    pub(crate) frontier: usize,
+    pub(crate) preview_code_units: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DesktopRuntimeSnapshot {
     pub(crate) service: DesktopServiceState,
     pub(crate) codex: DesktopCodexState,
     pub(crate) saving_enabled: bool,
+    pub(crate) connect_on_launch: bool,
     pub(crate) active_requests: usize,
+    pub(crate) policy: AgingPolicyView,
     pub(crate) session: SavingsView,
     pub(crate) today: SavingsView,
     pub(crate) all_time: SavingsView,
@@ -90,6 +99,7 @@ pub(crate) enum DesktopRuntimeError {
     Savings(SavingsStoreError),
     Codex(CodexConnectionError),
     ActiveRequests(usize),
+    PolicyChangeRequiresDisconnect,
 }
 
 impl fmt::Display for DesktopRuntimeError {
@@ -103,6 +113,10 @@ impl fmt::Display for DesktopRuntimeError {
                 formatter,
                 "cannot disconnect TokenSaver while {count} Codex request(s) are still active"
             ),
+            Self::PolicyChangeRequiresDisconnect => write!(
+                formatter,
+                "disconnect Codex before changing aging thresholds or preview policy"
+            ),
         }
     }
 }
@@ -114,7 +128,7 @@ impl std::error::Error for DesktopRuntimeError {
             Self::Preferences(error) => Some(error),
             Self::Savings(error) => Some(error),
             Self::Codex(error) => Some(error),
-            Self::ActiveRequests(_) => None,
+            Self::ActiveRequests(_) | Self::PolicyChangeRequiresDisconnect => None,
         }
     }
 }
@@ -230,14 +244,11 @@ impl DesktopRuntimeController {
             runtime.last_error = None;
         });
 
-        let saving_enabled = self.preferences.lock().await.preferences().saving_enabled;
+        let preferences = self.preferences.lock().await.preferences();
         let prepared = match prepare_native_codex_connection(
             &self.snapshot_path,
             0,
-            AgingPolicy {
-                enabled: saving_enabled,
-                ..AgingPolicy::default()
-            },
+            policy_from_preferences(preferences),
         )
         .await
         {
@@ -298,7 +309,7 @@ impl DesktopRuntimeController {
         self.status.update(|runtime| {
             runtime.service = ServiceStatus::Running;
             runtime.codex = CodexStatus::Connected;
-            runtime.saving_enabled = saving_enabled;
+            runtime.saving_enabled = preferences.saving_enabled;
             runtime.active_requests = 0;
             runtime.last_error = None;
         });
@@ -413,6 +424,38 @@ impl DesktopRuntimeController {
         Ok(())
     }
 
+    pub(crate) async fn set_min_bytes(&self, value: usize) -> Result<(), DesktopRuntimeError> {
+        self.ensure_policy_change_is_offline().await?;
+        self.preferences.lock().await.set_min_bytes(value)?;
+        Ok(())
+    }
+
+    pub(crate) async fn set_frontier(&self, value: usize) -> Result<(), DesktopRuntimeError> {
+        self.ensure_policy_change_is_offline().await?;
+        self.preferences.lock().await.set_frontier(value)?;
+        Ok(())
+    }
+
+    pub(crate) async fn set_preview_code_units(
+        &self,
+        value: usize,
+    ) -> Result<(), DesktopRuntimeError> {
+        self.ensure_policy_change_is_offline().await?;
+        self.preferences
+            .lock()
+            .await
+            .set_preview_code_units(value)?;
+        Ok(())
+    }
+
+    async fn ensure_policy_change_is_offline(&self) -> Result<(), DesktopRuntimeError> {
+        let _operation = self.operation.lock().await;
+        if self.inner.lock().await.connection.is_some() {
+            return Err(DesktopRuntimeError::PolicyChangeRequiresDisconnect);
+        }
+        Ok(())
+    }
+
     pub(crate) async fn refresh_connection_health(&self) {
         let active = {
             let inner = self.inner.lock().await;
@@ -471,6 +514,7 @@ impl DesktopRuntimeController {
         self.refresh_connection_health().await;
         let local_day = local_day_key();
         let runtime = self.status.snapshot();
+        let preferences = self.preferences.lock().await.preferences();
         let session = self.session_ledger.lock().await.for_session(self.session_id);
         let savings = self.durable_savings.lock().await;
 
@@ -478,7 +522,13 @@ impl DesktopRuntimeController {
             service: map_service_status(runtime.service),
             codex: map_codex_status(runtime.codex),
             saving_enabled: runtime.saving_enabled,
+            connect_on_launch: preferences.connect_on_launch,
             active_requests: runtime.active_requests,
+            policy: AgingPolicyView {
+                min_bytes: preferences.min_bytes,
+                frontier: preferences.frontier,
+                preview_code_units: preferences.preview_code_units,
+            },
             session: savings_view(session),
             today: savings_view(savings.for_day(&local_day)),
             all_time: savings_view(savings.all_time()),
@@ -502,6 +552,15 @@ impl DesktopRuntimeController {
             self.flush_persistent().await?;
         }
         Ok(())
+    }
+}
+
+fn policy_from_preferences(preferences: RuntimePreferences) -> AgingPolicy {
+    AgingPolicy {
+        enabled: preferences.saving_enabled,
+        min_bytes: preferences.min_bytes,
+        frontier: preferences.frontier,
+        preview_code_units: preferences.preview_code_units,
     }
 }
 
