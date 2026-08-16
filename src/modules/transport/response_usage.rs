@@ -149,8 +149,8 @@ fn usage_from_payload(payload: &Value) -> Option<ProviderUsageObservation> {
 }
 
 fn usage_from_value(usage: &Value) -> Option<ProviderUsageObservation> {
-    let input_tokens = token_count(usage.get("input_tokens"))
-        .or_else(|| token_count(usage.get("prompt_tokens")));
+    let input_tokens =
+        token_count(usage.get("input_tokens")).or_else(|| token_count(usage.get("prompt_tokens")));
     let output_tokens = token_count(usage.get("output_tokens"))
         .or_else(|| token_count(usage.get("completion_tokens")));
 
@@ -215,7 +215,8 @@ mod tests {
     #[test]
     fn streamed_nested_usage_survives_chunk_boundaries() {
         let mut collector = ResponseUsageCollector::new(true);
-        collector.observe(b"event: response.completed\ndata: {\"type\":\"response.completed\",\"res");
+        collector
+            .observe(b"event: response.completed\ndata: {\"type\":\"response.completed\",\"res");
         collector.observe(b"ponse\":{\"usage\":{\"input_tokens\":40,\"output_tokens\":3,\"input_tokens_details\":{\"cached_tokens\":30}}}}\n\n");
         assert_eq!(
             collector.finish(),
