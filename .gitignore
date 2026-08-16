@@ -4,6 +4,9 @@ node_modules/
 # Rust / Tauri build output
 target/
 
+# Generated Tauri icon set (source lives in assets/app-icon.svg)
+icons/
+
 # Other build output
 dist/
 build/
