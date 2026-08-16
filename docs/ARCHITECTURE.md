@@ -2,26 +2,33 @@
 
 ## Decision
 
-TokenSaver is a **modular monolith**: one local product with explicit internal module ownership and dependency boundaries.
+TokenSaver is a **modular monolith**: one local product with explicit internal ownership and dependency boundaries.
 
-The architecture optimizes for three properties:
+The architecture optimizes for:
 
-1. the tool-result aging domain stays independently testable
-2. Codex transport/configuration details cannot leak into aging rules
-3. the product remains a small context optimizer instead of evolving into a general model router
+1. independently testable deterministic aging
+2. Codex transport/configuration details not leaking into aging rules
+3. desktop/UI state not becoming a second backend truth
+4. a small context optimizer rather than a general model router
 
-`SCOPE.md` is authoritative for product boundaries. This document maps those boundaries to code.
+`SCOPE.md` is authoritative for product boundaries. This document maps them to code.
 
 ## Current code layout
 
 ```text
 src/
+├── main.rs
 ├── lib.rs
 ├── application/
 │   ├── mod.rs
 │   ├── benchmark.rs
 │   ├── measurement.rs
-│   └── codex_connection.rs
+│   ├── codex_connection.rs
+│   ├── desktop_runtime.rs
+│   ├── recovery.rs
+│   └── quality.rs
+├── desktop/
+│   └── mod.rs
 ├── modules/
 │   ├── mod.rs
 │   ├── aging/
@@ -49,17 +56,39 @@ src/
 │   │   ├── mod.rs
 │   │   ├── model.rs
 │   │   ├── aggregate.rs
+│   │   ├── store.rs
 │   │   └── tests.rs
 │   ├── runtime/
-│   │   └── mod.rs
+│   │   ├── mod.rs
+│   │   ├── state.rs
+│   │   └── preferences.rs
 │   └── diagnostics/
 │       └── mod.rs
 └── shared/
     ├── mod.rs
-    └── filesystem.rs
+    ├── filesystem.rs
+    └── security.rs
 ```
 
-The future macOS tray shell belongs at the product edge and calls application use cases. Runtime/tray implementation begins in Phase 5; the Phase 3 loopback server is already implemented but is deliberately not supervised by a UI/runtime shell yet.
+## Edge-to-core flow
+
+```text
+Tauri menu-bar shell
+        ↓
+application::desktop_runtime
+        ↓
+ ┌──────┼───────────────┐
+ ↓      ↓               ↓
+runtime telemetry  codex_connection
+                         ↓
+                 codex_integration
+                         +
+                     transport
+                         ↓
+                       aging
+```
+
+The shell does not open module storage, parse Codex config, or mutate transport state directly.
 
 ## Module ownership
 
@@ -67,61 +96,62 @@ The future macOS tray shell belongs at the product edge and calls application us
 
 Owns:
 
-- normalized transport-neutral history types
+- transport-neutral normalized history types
 - tool-result eligibility
 - aging policy
 - consumed-result detection
 - deterministic receipt generation
-- byte accounting intrinsic to transformation
-- per-result aging/skip decisions
+- receipt evidence parsing/identity verification
+- transformation byte accounting
+- per-result decisions
 - replacement instructions
 
 Must not know about:
 
-- Codex configuration files
+- Codex configuration
 - HTTP/WebSocket transport
-- JSON protocol objects
+- protocol JSON objects
 - authentication
 - telemetry persistence
-- process lifecycle
-- tray/UI
+- runtime lifecycle
+- Tauri/tray UI
 
-The domain does not mutate Codex JSON. It returns replacement instructions identified by `item index + tool-result kind + call_id`.
-
-This is the strongest boundary in the system.
+The domain returns replacement instructions identified by `item index + result kind + call_id`; it does not mutate Codex JSON.
 
 ### `transport`
 
 Owns:
 
-- loopback HTTP listener
-- caller capability authentication
-- supported Responses path filtering
+- loopback HTTP server
+- local capability authentication
+- finite native route/method allow-list
 - browser-origin rejection
-- native upstream header allow-listing
-- request decompression/recompression
-- Responses JSON normalization/application adapter
-- WebSocket-to-HTTP fallback signal
-- upstream streaming response relay
+- upstream header allow-list
+- request decompression/recompression for aging inspection
+- Responses JSON adapter
+- WebSocket → HTTP fallback signal
+- fixed first-party upstream relay
+- streamed response relay
+- real in-flight request count
+- request drain gate
 - content-free transport observations
 
-Transport may call the aging domain, but does not own aging policy semantics.
-
-Transport is not allowed to choose arbitrary upstreams at request time. The production connection use case supplies a fixed native upstream.
+Transport may call aging through its explicit contract. It does not own persistent settings, tray state, or Codex config files.
 
 ### `codex_integration`
 
 Owns:
 
 - Codex-home/config-path resolution
-- root `openai_base_url` connect/disconnect change
-- versioned local restoration snapshot
+- reversible root `openai_base_url` management
+- only-missing realtime bypass management
+- versioned owner-private restoration snapshot
 - crash-safe write ordering
-- exact restoration
-- config drift detection
-- restart state recovery metadata
+- exact restoration/removal
+- per-owned-key drift detection
+- persisted endpoint recovery metadata
 
-It does not choose models, replace the built-in OpenAI provider, own provider credentials, or implement aging policy.
+It does not choose models, own provider credentials, or implement aging.
 
 ### `telemetry`
 
@@ -130,140 +160,223 @@ Owns:
 - content-free optimization events
 - numeric metrics
 - aggregation
-- session/time-range/all-retained statistics
-- provider-reported token/cache metadata when naturally available
+- provider token/cache metadata when naturally available
+- bounded persistent daily/all-time numeric savings state
+- last-optimization numeric metadata
 
-It never receives original tool-result bodies or aging receipts from transport.
+It never receives/persists original tool-result bodies or receipt bodies as telemetry.
 
 ### `runtime`
 
-Reserved for Phase 5 ownership of:
+Owns local runtime state and user lifecycle preferences only:
 
-- server task supervision
-- startup/shutdown state
-- start-at-login behavior
-- application lifecycle
-- durable runtime state coordination
+- service state
+- Codex connection presentation state
+- saving preference
+- reconnect-on-launch intent
+- current active-request presentation count
 
-Transport owns the server mechanism; runtime will own whether/how long it runs.
+It deliberately does **not** start transport, edit Codex config, or query telemetry itself. Those cross-module operations belong in `application`.
 
 ### `diagnostics`
 
-Reserved for health checks, doctor/status reporting, and redacted diagnostic snapshots.
+Reserved for Phase 6 health/doctor/status reporting.
 
-Diagnostics must consume explicit status/application interfaces rather than bypassing ownership and inspecting module-private storage.
+Diagnostics must consume explicit application/status contracts rather than inspecting private storage ad hoc.
 
 ### `application`
 
-Owns cross-module use cases and orchestration.
+Owns cross-module use cases/orchestration.
 
-Current use cases include:
+Current use cases:
 
 - offline benchmark orchestration (`benchmark`)
-- aging/transport observation → telemetry mapping (`measurement`)
-- safe native Codex connection preparation/restoration (`codex_connection`)
+- transport/aging → telemetry mapping (`measurement`)
+- safe native Codex connection transaction (`codex_connection`)
+- desktop lifecycle + runtime snapshot composition (`desktop_runtime`)
+- explicit receipt recovery assessment (`recovery`)
+- deterministic quality fixtures (`quality`)
 
-The native connection use case deliberately orders operations as:
+`desktop_runtime` composes runtime, Codex connection, transport control, and telemetry while returning presentation-safe DTOs to the desktop shell.
 
-```text
-recover/generate endpoint
-  ↓
-bind transport
-  ↓
-durably snapshot Codex config
-  ↓
-install openai_base_url
-```
+### `desktop`
 
-UI and CLI call application use cases rather than module internals.
+Owns only native presentation and user intent:
+
+- Tauri application lifecycle integration
+- menu-bar menu construction
+- periodic presentation refresh
+- Connect / Disconnect intent
+- saving toggle intent
+- Start at Login intent
+- safe Quit request
+- formatting measured/estimated savings
+- outward error redaction
+
+It must not import module persistence or aging/transport internals directly.
 
 ### `shared`
 
-Contains only genuinely cross-cutting low-level primitives.
+Contains genuinely cross-cutting low-level primitives only.
 
-Currently:
+Current responsibilities:
 
-- atomic same-directory private file replacement
+- atomic owner-private file replacement
+- conservative local secret redaction for outward text
 
-`shared` must not contain aging logic, Codex parsing, telemetry business rules, or UI models.
+It must not contain aging policy, Codex parsing, telemetry business rules, or UI state.
 
 ## Dependency direction
 
-Current intended dependency shape:
-
 ```text
-future tray / CLI
-       │
-       ▼
- application
-   ├──────────────► codex_integration ──► shared filesystem
-   ├──────────────► telemetry
-   └──────────────► transport ──────────► aging
-                                      
- benchmark ─────────────────────────────► aging
- measurement ───────────────► transport + telemetry + aging metrics
+desktop ───────────────► application
+                              │
+           ┌──────────────────┼──────────────────┐
+           ▼                  ▼                  ▼
+        runtime          telemetry       codex_integration
+           ▲                  ▲                  ▲
+           │                  │                  │
+           └──────── application ────────────────┤
+                                                 ▼
+                                             transport
+                                                 ▼
+                                               aging
+
+application::benchmark ────────────────────────► aging
+application::recovery / quality ───────────────► aging
+shared ◄──── low-level filesystem/security users only
 ```
 
-`application` may coordinate modules. A module must not use another module's private persistence or implementation types as an informal API.
-
-### Explicitly forbidden examples
+### Explicitly forbidden
 
 ```text
 aging -> transport
 aging -> codex_integration
 aging -> telemetry
 aging -> runtime
-aging -> tray/UI
+aging -> desktop/UI
 telemetry -> transport internals
 codex_integration -> aging internals
-UI -> module persistence
+desktop -> module persistence
+desktop -> aging/transport internals
+runtime -> transport/codex persistence
 ```
 
-The content-free `TransportObservation` is an explicit contract, not permission for telemetry to inspect transport state directly; `application::measurement` performs that mapping.
+The content-free `TransportObservation` is an explicit contract; `application::measurement` performs the mapping into telemetry.
 
-## Public API rule
+## External/public API rule
 
-The crate-level public surface starts at `application`. Internal product modules are crate-internal. TokenSaver is an application, not a collection of accidental public libraries.
+TokenSaver is an application, not an accidental Rust SDK.
 
-A future reusable aging library requires an explicit extraction decision rather than casually exposing all internals.
+The crate's intentional external surface is currently the desktop entry function used by the binary:
+
+```text
+run_desktop()
+```
+
+`application`, `modules`, and `shared` remain crate-internal.
+
+A reusable aging library would require an explicit extraction/API decision.
 
 ## Process model
 
 Modular does not mean distributed.
 
-The intended macOS product may run these capabilities in one process:
+The macOS MVP runs in one process:
 
-- tray shell
+- Tauri menu-bar shell
+- desktop runtime controller
 - local Codex transport
 - aging engine
-- telemetry
-- runtime state
-- Codex configuration integration
-- diagnostics
+- telemetry aggregation/persistence
+- runtime preferences/state
+- Codex config integration
 
-If platform lifecycle constraints later justify a helper/service process, the same module contracts should survive that physical split.
+Single-instance protection prevents a second desktop process from creating a competing loopback/config transaction.
+
+If a helper/service process is later justified, module contracts should survive that physical split.
+
+## Lifecycle contracts
+
+### Connect ordering
+
+```text
+recover/generate local endpoint
+        ↓
+bind transport successfully
+        ↓
+durably write restoration snapshot
+        ↓
+install TokenSaver-owned Codex values
+        ↓
+start supervised runtime state
+```
+
+Codex is never intentionally pointed at an endpoint that did not bind successfully.
+
+### Disconnect ordering
+
+```text
+begin request drain
+        ↓
+active requests? ── yes ──► refuse + resume admission
+        │
+        no
+        ↓
+restore owned Codex config
+        ↓
+stop server
+        ↓
+drain content-free observations (bounded)
+        ↓
+flush numeric telemetry
+```
+
+### Normal Quit
+
+Normal exit passes through safe disconnect logic. `connect_on_launch` is preserved so a later user launch/autostart may reconnect, while the temporary Codex base URL is still restored before this process exits.
+
+Explicit Disconnect additionally clears reconnect-on-launch intent.
 
 ## Failure rules
 
 ### Aging uncertainty
 
-> **When the optimizer is uncertain, preserve the original model-visible content.**
+> **Preserve the original model-visible content.**
 
-Decode, parse, normalization, replacement-validation, serialization, or re-encoding uncertainty produces fail-original behavior rather than a partial rewrite.
+Decode/parse/normalization/replacement/serialization/re-encoding uncertainty produces fail-original behavior.
+
+### Recovery uncertainty
+
+> **Never present omitted middle content as exact without exact-source verification.**
 
 ### Configuration uncertainty
 
-> **When ownership is uncertain, preserve the user's Codex configuration.**
+> **Preserve the user's Codex configuration.**
 
-If `openai_base_url` no longer equals the value TokenSaver installed, disconnect reports drift and refuses to overwrite it.
+Drift refuses automatic destructive restoration.
 
-### Runtime ordering
+### Runtime uncertainty
 
-Codex is never intentionally pointed to an endpoint that has not already been bound successfully.
+> **Do not knowingly exit into a broken Codex configuration.**
 
-### Sensitive state
+A normal exit is prevented when active requests, config drift, or restoration failure makes safe detach impossible.
 
-The caller capability may be persisted only as part of owner-private TokenSaver restoration state. It must not be logged or surfaced as routine telemetry.
+### UI uncertainty
+
+> **Backend evidence wins over UI intent.**
+
+Tray checkmarks/menu text are refreshed from application state and OS autostart state rather than treated as truth themselves.
+
+## Sensitive state
+
+The caller capability may exist only where routing/recovery requires it:
+
+- active managed Codex config
+- owner-private restoration snapshot
+- in-memory transport state
+
+It must not enter routine telemetry or outward status text. Shared redaction is applied to surfaced local URL errors.
 
 ## Architecture change rule
 
