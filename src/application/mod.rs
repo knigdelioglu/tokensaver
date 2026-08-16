@@ -7,13 +7,15 @@
 //! Native Codex connection orchestration binds transport before applying the
 //! reversible Codex configuration change. Desktop runtime composition joins
 //! lifecycle, telemetry, Codex transport, diagnostics, settings, stats, and the
-//! owner-local CLI control channel without weakening module borders.
+//! owner-local CLI control channel without weakening module borders. Packaging
+//! and uninstall maintenance likewise remain application-owned operations.
 
 pub(crate) mod benchmark;
 pub(crate) mod codex_connection;
 pub(crate) mod control;
 pub(crate) mod desktop_runtime;
 pub(crate) mod doctor;
+pub(crate) mod maintenance;
 pub(crate) mod measurement;
 pub(crate) mod quality;
 pub(crate) mod recovery;
