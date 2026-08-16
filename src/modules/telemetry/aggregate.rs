@@ -47,6 +47,14 @@ pub(crate) struct SavingsSummary {
     pub(crate) at_or_below_threshold: u64,
     pub(crate) unconsumed: u64,
     pub(crate) receipt_not_smaller: u64,
+    pub(crate) responses_with_previous_response_id: u64,
+    pub(crate) responses_without_previous_response_id: u64,
+    pub(crate) previous_response_id_preserved: u64,
+    pub(crate) aging_pass_ran: u64,
+    pub(crate) input_items: u64,
+    pub(crate) function_call_outputs: u64,
+    pub(crate) custom_tool_call_outputs: u64,
+    pub(crate) textual_tool_result_bytes_seen: u64,
     pub(crate) bytes_before: u64,
     pub(crate) bytes_after: u64,
     pub(crate) bytes_saved: u64,
@@ -111,6 +119,26 @@ impl SavingsSummary {
         self.receipt_not_smaller = self
             .receipt_not_smaller
             .saturating_add(metrics.receipt_not_smaller);
+        self.responses_with_previous_response_id = self
+            .responses_with_previous_response_id
+            .saturating_add(metrics.responses_with_previous_response_id);
+        self.responses_without_previous_response_id = self
+            .responses_without_previous_response_id
+            .saturating_add(metrics.responses_without_previous_response_id);
+        self.previous_response_id_preserved = self
+            .previous_response_id_preserved
+            .saturating_add(metrics.previous_response_id_preserved);
+        self.aging_pass_ran = self.aging_pass_ran.saturating_add(metrics.aging_pass_ran);
+        self.input_items = self.input_items.saturating_add(metrics.input_items);
+        self.function_call_outputs = self
+            .function_call_outputs
+            .saturating_add(metrics.function_call_outputs);
+        self.custom_tool_call_outputs = self
+            .custom_tool_call_outputs
+            .saturating_add(metrics.custom_tool_call_outputs);
+        self.textual_tool_result_bytes_seen = self
+            .textual_tool_result_bytes_seen
+            .saturating_add(metrics.textual_tool_result_bytes_seen);
         self.bytes_before = self.bytes_before.saturating_add(metrics.bytes_before);
         self.bytes_after = self.bytes_after.saturating_add(metrics.bytes_after);
         self.bytes_saved = self.bytes_saved.saturating_add(metrics.bytes_saved);
