@@ -449,6 +449,7 @@ tokensaver config set min-bytes <bytes>
 tokensaver config set frontier <count>
 tokensaver config set preview-code-units <count>
 tokensaver doctor
+tokensaver uninstall [--purge-state]
 tokensaver version
 ```
 
@@ -460,6 +461,7 @@ Behavior:
 - numeric policy changes work offline or through the live runtime while Codex is disconnected
 - structural policy changes are refused while Codex is connected
 - saving on/off remains live-switchable
+- uninstall state purge requires the runtime to be stopped and an absent restoration snapshot
 - measured bytes and approximate token estimates remain labeled separately
 
 ## 6.4 Persistent policy schema — implemented
@@ -523,19 +525,104 @@ Still requiring the user's final validation pass:
 
 # Phase 7 — Packaging, update safety, and uninstall
 
-**Status: NOT STARTED**
+**Status: IMPLEMENTED — VALIDATION DEFERRED**
 
-Planned:
+Authoritative document: `docs/PACKAGING.md`.
 
-- macOS `.app` packaging
-- application/menu-bar icon assets
-- signing/notarization when appropriate
-- deterministic install/state paths
-- safe update lifecycle
-- update mechanism preserving preferences/savings state
-- first-class uninstall/disconnect
-- exact restoration of TokenSaver-owned Codex config
-- cleanup limited to TokenSaver-owned files
+Goal: produce a reproducible macOS package path and a safe update/uninstall lifecycle without adding an unsigned self-updater or weakening Codex restoration guarantees.
+
+## 7.1 macOS bundle configuration — implemented
+
+Implemented:
+
+- `.app` and `.dmg` bundle targets
+- Developer Tool category and product descriptions
+- macOS 12 minimum target retained
+- release-only icon overlay (`tauri.release.conf.json`)
+- single SVG icon source (`assets/app-icon.svg`)
+- generated `icons/` excluded from source control
+- packaging helper `scripts/package-macos.sh`
+
+The packaging script generates the platform icon set first, then builds `.app` + `.dmg` with the release overlay. It does not run project validation suites.
+
+## 7.2 Signing/notarization boundary — implemented
+
+No Apple certificate, notarization credential, private key, or updater signing key is committed.
+
+Release signing/notarization remains a release-environment responsibility. Local/ad-hoc packages must not be represented as production-signed releases.
+
+## 7.3 Update safety — implemented
+
+Self-updater artifacts are intentionally disabled:
+
+```text
+bundle.createUpdaterArtifacts = false
+```
+
+MVP updates use normal macOS application replacement:
+
+```text
+normal safe Quit
+  ↓
+restore Codex config + flush telemetry
+  ↓
+replace TokenSaver.app
+  ↓
+launch replacement
+  ↓
+reconnect when connect_on_launch was preserved
+```
+
+A future self-updater requires a trusted endpoint, updater public key, protected signing material, signed artifacts, version/downgrade policy, and recovery tests before scope is widened.
+
+## 7.4 Prepare for Uninstall — implemented
+
+Tray adds **Prepare for Uninstall…**.
+
+It:
+
+1. uses explicit disconnect, including request drain and exact Codex config restoration
+2. clears reconnect-on-launch intent
+3. disables Start at Login through the real Tauri autostart manager
+4. flushes numeric telemetry
+5. exits only if all preceding steps succeed
+
+The action is disabled during active requests and configuration drift; backend disconnect safeguards remain authoritative if UI state is stale.
+
+## 7.5 Optional owned-state purge — implemented
+
+CLI adds:
+
+```text
+tokensaver uninstall
+tokensaver uninstall --purge-state
+```
+
+The destructive form refuses to run while the menu-bar runtime is reachable.
+
+`src/application/maintenance.rs` removes only known TokenSaver-owned state and known atomic temp files. It is non-recursive, preserves/reports unknown entries, and removes the state directory only when empty.
+
+An active `codex-config-snapshot.json` blocks the entire purge. Generic purge never deletes the restoration snapshot and never edits `~/.codex/config.toml`.
+
+## Phase 7 deferred validation
+
+Still requiring the user's final validation pass:
+
+- compile/test/lint/format
+- icon generation
+- `.app` generation
+- `.dmg` generation
+- bundle metadata/icon inspection
+- real Apple signing/notarization with release credentials
+- normal Quit → app replacement → relaunch state preservation
+- Prepare for Uninstall flow
+- Start at Login removal during uninstall preparation
+- runtime-running purge refusal
+- snapshot-blocks-purge behavior
+- non-recursive/unknown-entry preservation
+- complete install/update/uninstall round trip
+
+**No test/build/lint/formatter/CI, icon generation, package build, signing, notarization, or install/uninstall validation command has been executed.**
 
 ---
 
@@ -584,13 +671,14 @@ Final release gates:
 6. config restoration/drift suite
 7. desktop runtime/tray suite
 8. CLI/doctor suite
-9. real Codex smoke test
-10. compaction-bypass test
-11. ON/OFF payload-diff invariant
-12. tray/backend state consistency
-13. privacy/log/UI/CLI redaction
-14. install/uninstall round trip
-15. realistic long-session savings + quality benchmark
+9. packaging/update/uninstall suite
+10. real Codex smoke test
+11. compaction-bypass test
+12. ON/OFF payload-diff invariant
+13. tray/backend state consistency
+14. privacy/log/UI/CLI redaction
+15. install/uninstall round trip
+16. realistic long-session savings + quality benchmark
 
 ---
 
