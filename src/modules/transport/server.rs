@@ -27,40 +27,28 @@ const MAX_ENCODED_BODY_BYTES: usize = 256 * 1024 * 1024;
 #[derive(Clone, Debug)]
 pub(crate) struct TransportSettings {
     pub(crate) bind_port: u16,
-    pub(crate) upstream_base_url: String,
     pub(crate) capability: CallerCapability,
     pub(crate) aging_policy: AgingPolicy,
     pub(crate) observer: Option<mpsc::UnboundedSender<TransportObservation>>,
 }
 
 impl TransportSettings {
-    pub(crate) fn native_chatgpt(bind_port: u16, aging_policy: AgingPolicy) -> Self {
-        Self::native_chatgpt_with_capability(
+    pub(crate) fn native_codex(bind_port: u16, aging_policy: AgingPolicy) -> Self {
+        Self::native_codex_with_capability(
             bind_port,
             CallerCapability::generate(),
             aging_policy,
         )
     }
 
-    pub(crate) fn native_chatgpt_with_capability(
+    pub(crate) fn native_codex_with_capability(
         bind_port: u16,
         capability: CallerCapability,
         aging_policy: AgingPolicy,
     ) -> Self {
         Self {
             bind_port,
-            upstream_base_url: CHATGPT_CODEX_BASE_URL.to_owned(),
             capability,
-            aging_policy,
-            observer: None,
-        }
-    }
-
-    pub(crate) fn native_openai_api(bind_port: u16, aging_policy: AgingPolicy) -> Self {
-        Self {
-            bind_port,
-            upstream_base_url: OPENAI_API_BASE_URL.to_owned(),
-            capability: CallerCapability::generate(),
             aging_policy,
             observer: None,
         }
@@ -120,7 +108,6 @@ impl BoundTransport {
             .build()
             .map_err(TransportError::ClientBuild)?;
         let state = Arc::new(ServerState {
-            upstream_base_url: settings.upstream_base_url.trim_end_matches('/').to_owned(),
             capability: settings.capability.clone(),
             aging_policy: aging_policy.clone(),
             observer: settings.observer,
@@ -155,7 +142,6 @@ impl BoundTransport {
 
 #[derive(Clone)]
 struct ServerState {
-    upstream_base_url: String,
     capability: CallerCapability,
     aging_policy: Arc<RwLock<AgingPolicy>>,
     observer: Option<mpsc::UnboundedSender<TransportObservation>>,
@@ -210,8 +196,8 @@ async fn handle_request(
     }
 
     // Current Codex advertises WebSocket support for the built-in OpenAI
-    // provider even when openai_base_url is overridden. TokenSaver intentionally
-    // serves HTTP only and asks Codex to fall back to the HTTP Responses path.
+    // provider even when openai_base_url is overridden. TokenSaver serves HTTP
+    // only and uses the client's explicit 426 -> HTTP fallback behavior.
     if request.headers().get(UPGRADE).is_some() {
         return empty_response(StatusCode::UPGRADE_REQUIRED);
     }
@@ -224,6 +210,7 @@ async fn handle_request(
 
     let query = request.uri().query().map(str::to_owned);
     let inbound_headers = request.headers().clone();
+    let upstream_base_url = native_upstream_base_url(&inbound_headers);
     let content_encoding = match inbound_headers.get(CONTENT_ENCODING) {
         None => None,
         Some(value) => match value.to_str() {
@@ -260,7 +247,7 @@ async fn handle_request(
         }
     }
 
-    let mut upstream_url = format!("{}{}", state.upstream_base_url, upstream_path);
+    let mut upstream_url = format!("{upstream_base_url}{upstream_path}");
     if let Some(query) = query {
         upstream_url.push('?');
         upstream_url.push_str(&query);
@@ -279,6 +266,19 @@ async fn handle_request(
     };
 
     relay_response(upstream)
+}
+
+/// The built-in Codex provider chooses ChatGPT backend for first-party account
+/// auth modes and api.openai.com for API-key auth before TokenSaver overrides
+/// its base URL. After interception, the account-ID routing header is the
+/// transport-level signal available to preserve that distinction without
+/// reading or owning Codex credentials.
+fn native_upstream_base_url(headers: &HeaderMap) -> &'static str {
+    if headers.contains_key("chatgpt-account-id") || headers.contains_key("x-openai-fedramp") {
+        CHATGPT_CODEX_BASE_URL
+    } else {
+        OPENAI_API_BASE_URL
+    }
 }
 
 fn relay_response(upstream: reqwest::Response) -> Response<Body> {
@@ -337,4 +337,24 @@ fn empty_response(status: StatusCode) -> Response<Body> {
     let mut response = Response::new(Body::empty());
     *response.status_mut() = status;
     response
+}
+
+#[cfg(test)]
+mod routing_tests {
+    use super::{native_upstream_base_url, CHATGPT_CODEX_BASE_URL, OPENAI_API_BASE_URL};
+    use axum::http::{HeaderMap, HeaderValue};
+
+    #[test]
+    fn account_scoped_auth_routes_to_chatgpt_backend() {
+        let mut headers = HeaderMap::new();
+        headers.insert("chatgpt-account-id", HeaderValue::from_static("account-1"));
+        assert_eq!(native_upstream_base_url(&headers), CHATGPT_CODEX_BASE_URL);
+    }
+
+    #[test]
+    fn api_key_style_auth_without_account_id_routes_to_openai_api() {
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", HeaderValue::from_static("Bearer sk-test"));
+        assert_eq!(native_upstream_base_url(&headers), OPENAI_API_BASE_URL);
+    }
 }
