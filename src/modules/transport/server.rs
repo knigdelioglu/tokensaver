@@ -1,7 +1,7 @@
 use std::fmt;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use axum::body::{to_bytes, Body};
@@ -9,7 +9,7 @@ use axum::extract::State;
 use axum::http::header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, UPGRADE};
 use axum::http::{HeaderMap, Method, Request, Response, StatusCode};
 use axum::Router;
-use futures_util::StreamExt;
+use futures_util::{Stream, StreamExt};
 use reqwest::redirect::Policy;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, RwLock};
@@ -70,6 +70,7 @@ pub(crate) struct TransportControl {
     capability: CallerCapability,
     aging_policy: Arc<RwLock<AgingPolicy>>,
     active_requests: Arc<AtomicUsize>,
+    draining: Arc<AtomicBool>,
 }
 
 impl TransportControl {
@@ -92,6 +93,18 @@ impl TransportControl {
     pub(crate) fn active_requests(&self) -> usize {
         self.active_requests.load(Ordering::Acquire)
     }
+
+    /// Stop admitting new native requests and return the number of requests
+    /// already in flight. A caller may disconnect only when this returns zero.
+    pub(crate) fn begin_drain(&self) -> usize {
+        self.draining.store(true, Ordering::Release);
+        self.active_requests.load(Ordering::Acquire)
+    }
+
+    /// Resume normal request admission after a drain attempt was refused.
+    pub(crate) fn resume_accepting(&self) {
+        self.draining.store(false, Ordering::Release);
+    }
 }
 
 pub(crate) struct BoundTransport {
@@ -110,6 +123,7 @@ impl BoundTransport {
         let local_addr = listener.local_addr()?;
         let aging_policy = Arc::new(RwLock::new(settings.aging_policy));
         let active_requests = Arc::new(AtomicUsize::new(0));
+        let draining = Arc::new(AtomicBool::new(false));
         let client = reqwest::Client::builder()
             .redirect(Policy::none())
             .build()
@@ -118,6 +132,7 @@ impl BoundTransport {
             capability: settings.capability.clone(),
             aging_policy: aging_policy.clone(),
             active_requests: active_requests.clone(),
+            draining: draining.clone(),
             observer: settings.observer,
             client,
         });
@@ -126,6 +141,7 @@ impl BoundTransport {
             capability: settings.capability,
             aging_policy,
             active_requests,
+            draining,
         };
 
         Ok(Self {
@@ -154,6 +170,7 @@ struct ServerState {
     capability: CallerCapability,
     aging_policy: Arc<RwLock<AgingPolicy>>,
     active_requests: Arc<AtomicUsize>,
+    draining: Arc<AtomicBool>,
     observer: Option<mpsc::UnboundedSender<TransportObservation>>,
     client: reqwest::Client,
 }
@@ -244,8 +261,16 @@ async fn handle_request(
     if route.method == Method::POST && !is_json_request(request.headers()) {
         return empty_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
+    if state.draining.load(Ordering::Acquire) {
+        return empty_response(StatusCode::SERVICE_UNAVAILABLE);
+    }
 
-    let _active_request = ActiveRequestGuard::enter(state.active_requests.clone());
+    let active_request = ActiveRequestGuard::enter(state.active_requests.clone());
+    // Close the check/increment race with begin_drain(): a request that entered
+    // while draining flipped to true is rejected before it can reach upstream.
+    if state.draining.load(Ordering::Acquire) {
+        return empty_response(StatusCode::SERVICE_UNAVAILABLE);
+    }
 
     let Some(upstream_path) = upstream_path(local_path) else {
         return empty_response(StatusCode::NOT_FOUND);
@@ -307,7 +332,7 @@ async fn handle_request(
         Err(_) => return empty_response(StatusCode::BAD_GATEWAY),
     };
 
-    relay_response(upstream)
+    relay_response(upstream, active_request)
 }
 
 fn native_upstream_base_url(headers: &HeaderMap) -> &'static str {
@@ -353,13 +378,21 @@ fn native_route(path: &str) -> Option<NativeRoute> {
     Some(route)
 }
 
-fn relay_response(upstream: reqwest::Response) -> Response<Body> {
+fn relay_response(upstream: reqwest::Response, active_request: ActiveRequestGuard) -> Response<Body> {
     let status = upstream.status();
     let upstream_headers = upstream.headers().clone();
-    let stream = upstream
-        .bytes_stream()
-        .map(|chunk| chunk.map_err(io::Error::other));
-    let mut response = Response::new(Body::from_stream(stream));
+    let mut upstream_stream = Box::pin(
+        upstream
+            .bytes_stream()
+            .map(|chunk| chunk.map_err(io::Error::other)),
+    );
+    // The guard is captured by the stream itself, so the request remains active
+    // until the response body is exhausted or the downstream client drops it.
+    let guarded_stream = futures_util::stream::poll_fn(move |context| {
+        let _keep_guard_alive = &active_request;
+        upstream_stream.as_mut().poll_next(context)
+    });
+    let mut response = Response::new(Body::from_stream(guarded_stream));
     *response.status_mut() = status;
 
     for (name, value) in &upstream_headers {
