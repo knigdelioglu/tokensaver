@@ -42,7 +42,7 @@ Mixed/image-bearing or otherwise unsupported output shapes remain exact.
 
 ### Deterministic receipt
 
-The initial receipt retains:
+The receipt retains:
 
 - original UTF-8 byte length
 - SHA-256 digest
@@ -69,6 +69,22 @@ Unknown, malformed, ambiguous, or unsupported shapes are not guessed into a comp
 
 Explicit Codex conversation compaction must read the original history rather than already-aged receipts.
 
+## Intentional TokenSaver recovery hardening
+
+TokenSaver does not copy the beta.4 recovery wording verbatim.
+
+Phase 4 deliberately strengthens the receipt contract:
+
+- a machine-readable `tokensaver-receipt:v1` identity line carries original byte length, SHA-256, and preview byte lengths
+- the omitted middle is explicitly declared unavailable and must not be inferred
+- replay of a historical tool call is suggested only when repeating that operation is safe
+- an externally recovered candidate is accepted as exact only when UTF-8 byte length and SHA-256 both match the receipt
+- TokenSaver does not create a broad persistent store of complete historical tool-result bodies in MVP
+
+These are intentional safety/privacy extensions of the upstream idea, not attempts to preserve beta.4 output text byte-for-byte.
+
+See `docs/RECOVERY.md` for the authoritative TokenSaver recovery contract.
+
 ## Behavior TokenSaver does not adopt
 
 TokenSaver does not inherit Codex Router's broader product responsibilities, including:
@@ -92,7 +108,7 @@ If an upstream change is not directly required for safe token/context reduction 
 
 The reference release treated native GPT aging as an opt-in behavior and its surrounding releases changed default/experimental status while the feature was being validated.
 
-TokenSaver therefore does **not** infer its final shipping default solely from upstream. Enablement default is a TokenSaver release decision gated by Phase 4 quality validation and release evidence.
+TokenSaver therefore does **not** infer its final shipping default solely from upstream. Enablement default is a TokenSaver release decision gated by final quality validation and release evidence.
 
 ## Metrics interpretation
 
@@ -112,4 +128,4 @@ Future Codex Router releases may improve aging. TokenSaver may study and selecti
 2. It fits TokenSaver's modular-monolith boundaries.
 3. It does not introduce provider/model-routing scope.
 4. It preserves fail-original and hard pass-through guarantees.
-5. It receives TokenSaver-specific tests rather than being copied without verification.
+5. It receives TokenSaver-specific test sources rather than being copied without verification.
