@@ -320,20 +320,10 @@ async fn handle_request(
         local_path,
         policy,
     );
-
-    if let Some(observer) = &state.observer {
-        // Telemetry is best-effort and content-free. A stuck consumer must not
-        // create an unbounded memory queue or delay native Codex traffic.
-        if observer
-            .try_send(TransportObservation {
-                outcome: prepared.outcome,
-                aging_stats: prepared.aging.stats.clone(),
-            })
-            .is_err()
-        {
-            state.dropped_observations.fetch_add(1, Ordering::Relaxed);
-        }
-    }
+    let observation = TransportObservation {
+        outcome: prepared.outcome,
+        aging_stats: prepared.aging.stats.clone(),
+    };
 
     let mut headers = native_upstream_headers(&inbound_headers);
     if let Some(content_encoding) = content_encoding {
@@ -361,6 +351,15 @@ async fn handle_request(
         Ok(response) => response,
         Err(_) => return empty_response(StatusCode::BAD_GATEWAY),
     };
+
+    if let Some(observer) = &state.observer {
+        // Only count an optimization after upstream has accepted the request
+        // far enough to return response headers. Telemetry remains best-effort
+        // and must never delay native Codex traffic.
+        if observer.try_send(observation).is_err() {
+            state.dropped_observations.fetch_add(1, Ordering::Relaxed);
+        }
+    }
 
     relay_response(upstream, active_request)
 }
