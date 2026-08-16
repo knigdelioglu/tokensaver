@@ -9,10 +9,7 @@ mod model;
 mod store;
 
 pub(crate) use aggregate::{SavingsLedger, SavingsSummary};
-pub(crate) use model::{
-    BYTES_PER_TOKEN_ESTIMATE, OptimizationEvent, OptimizationMetrics, OptimizationOutcome,
-    ProviderUsage,
-};
+pub(crate) use model::{OptimizationEvent, OptimizationMetrics, OptimizationOutcome, ProviderUsage};
 pub(crate) use store::{DurableSavingsStore, LastOptimization, SavingsStoreError};
 
 #[cfg(test)]

@@ -10,7 +10,7 @@
     }
   },
   "bundle": {
-    "active": true,
+    "active": false,
     "targets": ["app", "dmg"],
     "icon": [],
     "category": "DeveloperTool",

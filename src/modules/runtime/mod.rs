@@ -10,4 +10,4 @@ mod state;
 pub(crate) use preferences::{
     RuntimePreferences, RuntimePreferencesError, RuntimePreferencesStore,
 };
-pub(crate) use state::{CodexStatus, RuntimeStatus, RuntimeStatusStore, ServiceStatus};
+pub(crate) use state::{CodexStatus, RuntimeStatusStore, ServiceStatus};
