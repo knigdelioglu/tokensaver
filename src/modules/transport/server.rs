@@ -20,7 +20,8 @@ use crate::modules::aging::AgingPolicy;
 use super::capability::CallerCapability;
 use super::headers::{has_browser_origin, native_upstream_headers};
 use super::observation::TransportObservation;
-use super::request::prepare_responses_body;
+use super::request::{RequestDiagnostics, prepare_responses_body};
+use super::response_usage::ResponseUsageCollector;
 
 const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 const OPENAI_API_BASE_URL: &str = "https://api.openai.com/v1";
@@ -68,6 +69,7 @@ pub(crate) struct TransportControl {
     active_requests: Arc<AtomicUsize>,
     dropped_observations: Arc<AtomicU64>,
     draining: Arc<AtomicBool>,
+    last_request_diagnostics: Arc<RwLock<Option<RequestDiagnostics>>>,
 }
 
 impl TransportControl {
@@ -87,6 +89,10 @@ impl TransportControl {
     #[allow(dead_code)]
     pub(crate) async fn aging_policy(&self) -> AgingPolicy {
         *self.aging_policy.read().await
+    }
+
+    pub(crate) async fn last_request_diagnostics(&self) -> Option<RequestDiagnostics> {
+        *self.last_request_diagnostics.read().await
     }
 
     pub(crate) fn active_requests(&self) -> usize {
@@ -128,6 +134,7 @@ impl BoundTransport {
         let active_requests = Arc::new(AtomicUsize::new(0));
         let dropped_observations = Arc::new(AtomicU64::new(0));
         let draining = Arc::new(AtomicBool::new(false));
+        let last_request_diagnostics = Arc::new(RwLock::new(None));
         let client = reqwest::Client::builder()
             .redirect(Policy::none())
             .connect_timeout(UPSTREAM_CONNECT_TIMEOUT)
@@ -140,6 +147,7 @@ impl BoundTransport {
             active_requests: active_requests.clone(),
             dropped_observations: dropped_observations.clone(),
             draining: draining.clone(),
+            last_request_diagnostics: last_request_diagnostics.clone(),
             observer: settings.observer,
             client,
         });
@@ -150,6 +158,7 @@ impl BoundTransport {
             active_requests,
             dropped_observations,
             draining,
+            last_request_diagnostics,
         };
 
         Ok(Self {
@@ -180,6 +189,7 @@ struct ServerState {
     active_requests: Arc<AtomicUsize>,
     dropped_observations: Arc<AtomicU64>,
     draining: Arc<AtomicBool>,
+    last_request_diagnostics: Arc<RwLock<Option<RequestDiagnostics>>>,
     observer: Option<mpsc::Sender<TransportObservation>>,
     client: reqwest::Client,
 }
@@ -287,8 +297,6 @@ async fn handle_request(
     let Some(active_request) = ActiveRequestGuard::try_enter(state.active_requests.clone()) else {
         return empty_response(StatusCode::TOO_MANY_REQUESTS);
     };
-    // Close the check/increment race with begin_drain(): a request that entered
-    // while draining flipped to true is rejected before it can reach upstream.
     if state.draining.load(Ordering::Acquire) {
         return empty_response(StatusCode::SERVICE_UNAVAILABLE);
     }
@@ -313,9 +321,14 @@ async fn handle_request(
 
     let policy = *state.aging_policy.read().await;
     let prepared = prepare_responses_body(&body, content_encoding.as_deref(), &local_path, policy);
+    if let Some(diagnostics) = prepared.diagnostics {
+        *state.last_request_diagnostics.write().await = Some(diagnostics);
+    }
     let observation = TransportObservation {
         outcome: prepared.outcome,
         aging_stats: prepared.aging.stats.clone(),
+        request: prepared.diagnostics,
+        provider_usage: None,
     };
 
     let mut headers = native_upstream_headers(&inbound_headers);
@@ -345,16 +358,13 @@ async fn handle_request(
         Err(_) => return empty_response(StatusCode::BAD_GATEWAY),
     };
 
-    if let Some(observer) = &state.observer {
-        // Only count an optimization after upstream has accepted the request
-        // far enough to return response headers. Telemetry remains best-effort
-        // and must never delay native Codex traffic.
-        if observer.try_send(observation).is_err() {
-            state.dropped_observations.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
-    relay_response(upstream, active_request)
+    relay_response(
+        upstream,
+        active_request,
+        state.observer.clone(),
+        state.dropped_observations.clone(),
+        observation,
+    )
 }
 
 fn encoded_content_length_exceeds_limit(headers: &HeaderMap) -> bool {
@@ -411,19 +421,54 @@ fn native_route(path: &str) -> Option<NativeRoute> {
 fn relay_response(
     upstream: reqwest::Response,
     active_request: ActiveRequestGuard,
+    observer: Option<mpsc::Sender<TransportObservation>>,
+    dropped_observations: Arc<AtomicU64>,
+    observation: TransportObservation,
 ) -> Response<Body> {
     let status = upstream.status();
     let upstream_headers = upstream.headers().clone();
+    let event_stream = is_event_stream_response(&upstream_headers);
     let mut upstream_stream = Box::pin(
         upstream
             .bytes_stream()
             .map(|chunk| chunk.map_err(io::Error::other)),
     );
+    let mut collector = Some(ResponseUsageCollector::new(event_stream));
+    let mut pending_observation = Some(observation);
+
     // The guard is captured by the stream itself, so the request remains active
     // until the response body is exhausted or the downstream client drops it.
+    // Usage inspection is side-band only: the exact upstream chunk is returned
+    // after its bytes have been copied into a bounded numeric observer.
     let guarded_stream = futures_util::stream::poll_fn(move |context| {
         let _keep_guard_alive = &active_request;
-        upstream_stream.as_mut().poll_next(context)
+        match upstream_stream.as_mut().poll_next(context) {
+            std::task::Poll::Ready(Some(Ok(chunk))) => {
+                if let Some(collector) = collector.as_mut() {
+                    collector.observe(&chunk);
+                }
+                std::task::Poll::Ready(Some(Ok(chunk)))
+            }
+            std::task::Poll::Ready(Some(Err(error))) => {
+                emit_observation(
+                    &observer,
+                    &dropped_observations,
+                    &mut pending_observation,
+                    &mut collector,
+                );
+                std::task::Poll::Ready(Some(Err(error)))
+            }
+            std::task::Poll::Ready(None) => {
+                emit_observation(
+                    &observer,
+                    &dropped_observations,
+                    &mut pending_observation,
+                    &mut collector,
+                );
+                std::task::Poll::Ready(None)
+            }
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
     });
     let mut response = Response::new(Body::from_stream(guarded_stream));
     *response.status_mut() = status;
@@ -435,6 +480,34 @@ fn relay_response(
         response.headers_mut().append(name.clone(), value.clone());
     }
     response
+}
+
+fn emit_observation(
+    observer: &Option<mpsc::Sender<TransportObservation>>,
+    dropped_observations: &Arc<AtomicU64>,
+    pending_observation: &mut Option<TransportObservation>,
+    collector: &mut Option<ResponseUsageCollector>,
+) {
+    let Some(mut observation) = pending_observation.take() else {
+        return;
+    };
+    observation.provider_usage = collector.take().and_then(ResponseUsageCollector::finish);
+    if let Some(observer) = observer
+        && observer.try_send(observation).is_err()
+    {
+        dropped_observations.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn is_event_stream_response(headers: &HeaderMap) -> bool {
+    headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value.split(';').next().is_some_and(|media_type| {
+                media_type.trim().eq_ignore_ascii_case("text/event-stream")
+            })
+        })
 }
 
 fn is_json_request(headers: &HeaderMap) -> bool {
