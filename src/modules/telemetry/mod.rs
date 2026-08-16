@@ -8,7 +8,7 @@ mod aggregate;
 mod model;
 mod store;
 
-pub(crate) use aggregate::{SavingsLedger, SavingsSummary};
+pub(crate) use aggregate::{ProviderCacheSummary, SavingsLedger, SavingsSummary};
 pub(crate) use model::{
     OptimizationEvent, OptimizationMetrics, OptimizationOutcome, ProviderUsage,
 };
