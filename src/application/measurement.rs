@@ -54,6 +54,7 @@ pub(crate) fn event_from_transport_observation(
     let outcome = match observation.outcome {
         PreparationOutcome::Disabled => OptimizationOutcome::Disabled,
         PreparationOutcome::CompactionBypass => OptimizationOutcome::Bypassed,
+        PreparationOutcome::NativePassthrough => OptimizationOutcome::NativePassthrough,
         PreparationOutcome::FailOriginal => OptimizationOutcome::FailOriginal,
         PreparationOutcome::EvaluatedNoEligibleResult => {
             OptimizationOutcome::EvaluatedNoEligibleResult
