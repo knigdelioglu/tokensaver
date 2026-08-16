@@ -38,7 +38,9 @@ Dropped observations mean savings statistics may be incomplete. They are therefo
 
 A request is not recorded as an optimization observation until the upstream request has progressed far enough to return response headers. A connection failure before that point therefore cannot inflate the savings counters.
 
-## Owner-local control-channel bounds
+## Owner-local state and control bounds
+
+The desktop runtime creates/repairs its per-user state root as owner-private (`0700`) on Unix before opening preferences, savings, restoration state, or the control socket.
 
 The Unix control channel is also bounded:
 
@@ -101,10 +103,13 @@ bash scripts/release-macos.sh
 
 The release script first invokes `scripts/verify-release-gates.py`. Packaging is refused unless local `validation/release-manifest.json` proves all required release gates for:
 
+- a **clean working tree** with no tracked or untracked source changes
 - the exact current Git commit
 - the exact current TokenSaver Cargo version
 - the pinned Codex protocol baseline
 - the exact currently installed `codex --version` identity used during validation
+
+The clean-tree requirement matters because Cargo/Tauri package the working tree, not an abstract Git SHA. A matching `HEAD` with uncommitted source changes is therefore not sufficient release evidence.
 
 The local completed manifest is gitignored. The repository contains only `validation/release-manifest.example.json`, with every gate false.
 
@@ -126,7 +131,7 @@ Required gates are:
 14. install/uninstall round trip
 15. realistic long-session savings + quality benchmark
 
-The verifier does **not** execute these gates or manufacture evidence. It only verifies a manifest produced by the final validation process. A false/missing/stale manifest blocks release packaging.
+The verifier does **not** execute these gates or manufacture evidence. It only verifies a manifest produced by the final validation process. A dirty tree or false/missing/stale/mismatched manifest blocks release packaging.
 
 ## Existing recovery guarantees retained
 
@@ -157,11 +162,12 @@ Still to execute:
 - control-client saturation/timeouts
 - telemetry queue saturation and dropped-counter visibility
 - upstream connection failure not counted as savings
+- owner-private state-root behavior
 - crash/restart and power-loss recovery
 - Codex-version warning/allow-list behavior
 - real ON/OFF Codex payload and quality comparison
 - performance/memory/latency benchmark
-- release-manifest negative and positive cases
+- release-manifest dirty-tree, negative, and positive cases
 - signed/notarized packaging when real credentials are available
 
 No test, build, lint, formatter, benchmark, CI, live Codex, packaging, or release-verifier command was executed while implementing Phase 8.
