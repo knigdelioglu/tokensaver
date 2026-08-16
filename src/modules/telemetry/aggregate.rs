@@ -173,6 +173,7 @@ impl SavingsSummary {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn cache_rate_basis_points(self) -> Option<u64> {
         if self.provider_input_tokens == 0 {
             return None;
