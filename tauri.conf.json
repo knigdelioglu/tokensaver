@@ -18,7 +18,8 @@
     "longDescription": "TokenSaver reduces repeated Codex input context by safely compacting eligible historical tool results while preserving native Codex behavior.",
     "createUpdaterArtifacts": false,
     "macOS": {
-      "minimumSystemVersion": "12.0"
+      "minimumSystemVersion": "12.0",
+      "infoPlist": "Info.plist"
     }
   }
 }

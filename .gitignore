@@ -4,6 +4,9 @@ node_modules/
 # Rust / Tauri build output
 target/
 
+# Local Cargo configuration (machine-specific build path)
+.cargo/config.toml
+
 # Generated Tauri icon set (source lives in assets/app-icon.svg)
 icons/
 
